@@ -1,0 +1,95 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.intersystems</groupId>
+  <artifactId>vendorautomation</artifactId>
+  <version>1.0</version>
+  <name>Vendor Automation Utility</name>
+  <description>Automates creation of IDFS artifacts for known vendors such as Salesforce</description>
+
+
+    <properties>
+        <java.version>11</java.version>
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <intersystems.library.version>3.8.0</intersystems.library.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <buildShadedJar>false</buildShadedJar>
+    </properties>
+
+    <distributionManagement>
+        <repository>
+            <id>sds-release</id>
+            <name>Arti-releases</name>
+            <url>https://arti.iscinternal.com/sds-maven-dev</url>
+        </repository>
+        <snapshotRepository>
+            <id>sds-snapshots</id>
+            <name>Arti-snapshots</name>
+            <url>https://arti.iscinternal.com/sds-maven-dev</url>
+        </snapshotRepository>
+    </distributionManagement>
+
+    <scm>
+        <connection>scm:git:https://gitlab.iscinternal.com/sds/vendor-automation.git</connection>
+        <developerConnection>scm:git:https://gitlab.iscinternal.com/sds/vendor-automation.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
+
+    <repositories>
+        <repository>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+            <id>libs-release</id>
+            <url>https://arti.iscinternal.com/libs-release</url>
+        </repository>
+        <repository>
+            <id>sds-release</id>
+            <name>Arti-releases</name>
+            <url>https://arti.iscinternal.com/sds-maven-dev</url>
+        </repository>
+        <repository>
+            <id>sds-snapshots</id>
+            <name>Arti-releases</name>
+            <url>https://arti.iscinternal.com/sds-maven-dev</url>
+        </repository>
+        <repository>
+            <snapshots />
+            <id>libs-snapshots</id>
+            <url>https://arti.iscinternal.com/libs-snapshot</url>
+        </repository>
+        <repository>
+            <id>central</id>
+            <url>https://repo1.maven.org/maven2</url>
+        </repository>
+        <repository>
+            <id>confluent</id>
+            <url>https://packages.confluent.io/maven</url>
+        </repository>
+    </repositories>
+
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.intersystems</groupId>
+                <artifactId>intersystems-jdbc</artifactId>
+                <version>${intersystems.library.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+
+    <dependencies>
+
+        <!-- database driver dependencies for standalone -->
+        <dependency>
+            <groupId>com.intersystems</groupId>
+            <artifactId>intersystems-jdbc</artifactId>
+        </dependency>
+
+
+    </dependencies>
+
+
+</project>
