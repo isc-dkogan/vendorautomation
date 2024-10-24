@@ -31,8 +31,9 @@ public class App {
         // String newDataSourceId = app.DuplicateSalesforceDataSource(iris, 2, "ISCSalesforcePackage");
 
         // System.out.println("new data source id: " + newDataSourceId);
-        JSONArray dataSourceItems = app.GetDataSourceItems(5);
-        app.GetDataSchemaDefinitions(iris, 5, dataSourceItems);
+        // JSONArray dataSourceItems = app.GetDataSourceItems(5);
+        // app.ImportDataSchemaDefinitions(iris, 5, dataSourceItems);
+        app.PublishDataSchemaDefinitions(iris, 5);
     }
 
     public String DuplicateSalesforceDataSource(IRIS iris, int dataSourceId, String newDataSourceName) {
@@ -58,7 +59,34 @@ public class App {
 
     }
 
-    public void GetDataSchemaDefinitions(IRIS iris, int dataSourceId, JSONArray itemsArray) {
+    public void PublishDataSchemaDefinitions(IRIS iris, int dataSourceId) {
+
+        try {
+            IRISObject definitionIds = (IRISObject) iris.classMethodObject("%Library.ListOfDataTypes", "%New");
+
+            String query = "SELECT ID FROM SDS_DataCatalog.DataSchemaDefinition WHERE DataSource = ?";
+            IRISObject statement = (IRISObject) iris.classMethodObject("%SQL.Statement", "%New");
+            Long tsc = (Long) statement.invoke("%Prepare", query);
+            IRISObject rset = (IRISObject) statement.invoke("%Execute", dataSourceId);
+
+            Long nextResult = (Long) rset.invoke("%Next");
+            boolean hasNext = nextResult != 0;
+            while (hasNext) {
+                String id = (String) rset.invoke("%GetData", 1);
+
+                System.out.println("ID: " + id);
+
+                nextResult = (Long) rset.invoke("%Next");
+                hasNext = nextResult != 0;
+            }
+        }
+
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void ImportDataSchemaDefinitions(IRIS iris, int dataSourceId, JSONArray itemsArray) {
 
         try {
             IRISObject importList = (IRISObject) iris.classMethodObject("intersystems.dataLoader.v1.dataSources.DataSourceImportList", "%New");
