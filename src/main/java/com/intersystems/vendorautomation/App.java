@@ -12,8 +12,11 @@ import com.intersystems.jdbc.IRISObject;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.Base64;
 import java.util.Set;
+import java.sql.Statement;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -28,16 +31,16 @@ public class App {
         IRIS iris = IRIS.createIRIS(connection);
 
         App app = new App();
-        // String newDataSourceId = app.DuplicateSalesforceDataSource(iris, 2, "ISCSalesforcePackage");
-
-        // System.out.println("new data source id: " + newDataSourceId);
-        // JSONArray dataSourceItems = app.GetDataSourceItems(5);
-        // app.ImportDataSchemaDefinitions(iris, 5, dataSourceItems);
-        app.PublishDataSchemaDefinitions(iris, 5);
+        int newDataSourceId = app.DuplicateDataSource(iris, 2, "ISCSalesforcePackage");
+        JSONArray dataSourceItems = app.GetDataSourceItems(newDataSourceId);
+        app.ImportDataSchemaDefinitions(iris, newDataSourceId, dataSourceItems);
+        // app.PublishDataSchemaDefinitions(iris, connection, newDataSourceId);
     }
 
-    public String DuplicateSalesforceDataSource(IRIS iris, int dataSourceId, String newDataSourceName) {
-        String newDataSourceId = "";
+    public int DuplicateDataSource(IRIS iris, int dataSourceId, String newDataSourceName) {
+        System.out.println("DuplicateDataSource() dataSourceId=" + dataSourceId);
+
+        int newDataSourceId = 0;
 
         try {
             IRISObject originalDataSource = (IRISObject) iris.classMethodObject("SDS.DataLoader.DS.DataSource", "%OpenId", dataSourceId);
@@ -48,7 +51,9 @@ public class App {
 
             Object sc = newDataSource.invoke("%Save");
 
-            newDataSourceId = (String) newDataSource.invoke("%Id");
+            String id = (String) newDataSource.invoke("%Id");
+
+            newDataSourceId = Integer.parseInt(id);
         }
 
         catch (Exception e) {
@@ -59,26 +64,24 @@ public class App {
 
     }
 
-    public void PublishDataSchemaDefinitions(IRIS iris, int dataSourceId) {
+    public void PublishDataSchemaDefinitions(IRIS iris, IRISConnection conn, int dataSourceId) {
+        System.out.println("PublishDataSchemaDefinitions() dataSourceId=" + dataSourceId);
 
         try {
-            IRISObject definitionIds = (IRISObject) iris.classMethodObject("%Library.ListOfDataTypes", "%New");
-
             String query = "SELECT ID FROM SDS_DataCatalog.DataSchemaDefinition WHERE DataSource = ?";
-            IRISObject statement = (IRISObject) iris.classMethodObject("%SQL.Statement", "%New");
-            Long tsc = (Long) statement.invoke("%Prepare", query);
-            IRISObject rset = (IRISObject) statement.invoke("%Execute", dataSourceId);
 
-            Long nextResult = (Long) rset.invoke("%Next");
-            boolean hasNext = nextResult != 0;
-            while (hasNext) {
-                String id = (String) rset.invoke("%GetData", 1);
+            PreparedStatement stmt = conn.prepareStatement(query);
+            stmt.setInt(1, dataSourceId);
+            ResultSet rs = stmt.executeQuery();
 
-                System.out.println("ID: " + id);
+            while (rs.next()) {
+                String id = rs.getString("ID");
+                System.out.println("DataSchemaDefinition id = " + id);
 
-                nextResult = (Long) rset.invoke("%Next");
-                hasNext = nextResult != 0;
+                iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
             }
+
+            stmt.close();
         }
 
         catch (Exception e) {
@@ -87,27 +90,17 @@ public class App {
     }
 
     public void ImportDataSchemaDefinitions(IRIS iris, int dataSourceId, JSONArray itemsArray) {
+        System.out.println("ImportDataSchemaDefinitions() dataSourceId=" + dataSourceId);
 
         try {
-            IRISObject importList = (IRISObject) iris.classMethodObject("intersystems.dataLoader.v1.dataSources.DataSourceImportList", "%New");
-            IRISObject importListItems = (IRISObject) importList.get("items");
+            IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
 
             for (int i = 0; i < itemsArray.length(); i++) {
                 JSONObject item = itemsArray.getJSONObject(i);
                 System.out.println("Item " + (i + 1) + ": " + item.toString());
 
-                IRISObject importListItem = (IRISObject) iris.classMethodObject("intersystems.dataLoader.v1.dataSources.DataSourceImportListItem", "%New");
-                importListItem.set("entityName", item.getString("memberName"));
-
-                importListItems.invoke("Insert", importListItem);
-            }
-
-            IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
-
-            for (int i = 0; i < itemsArray.length(); i++) {
-                JSONObject item = itemsArray.getJSONObject(i);
-
                 IRISObject importRequest = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BO.ImportRequest", "%New");
+                importRequest.set("BatchId", 1);
                 importRequest.set("DataSourceId", dataSourceId);
                 importRequest.set("MemberName", item.getString("memberName"));
                 // importRequest.set("SchemaName", item.getString("schemaName"));
@@ -122,8 +115,8 @@ public class App {
         }
     }
 
-
     public JSONArray GetDataSourceItems(int dataSourceId) {
+        System.out.println("GetDataSourceItems() dataSourceId=" + dataSourceId);
 
         JSONArray itemsArray = null;
 
