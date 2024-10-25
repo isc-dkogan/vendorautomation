@@ -34,14 +34,13 @@ public class App {
         int newDataSourceId = app.DuplicateDataSource(iris, 2, "ISCSalesforcePackage");
         JSONArray dataSourceItems = app.GetDataSourceItems(newDataSourceId);
         app.ImportDataSchemaDefinitions(iris, newDataSourceId, dataSourceItems);
-        // app.PublishDataSchemaDefinitions(iris, connection, newDataSourceId);
+        app.PublishDataSchemaDefinitions(iris, connection, newDataSourceId);
     }
 
     public int DuplicateDataSource(IRIS iris, int dataSourceId, String newDataSourceName) {
         System.out.println("DuplicateDataSource() dataSourceId=" + dataSourceId);
 
         int newDataSourceId = 0;
-
         try {
             IRISObject originalDataSource = (IRISObject) iris.classMethodObject("SDS.DataLoader.DS.DataSource", "%OpenId", dataSourceId);
 
@@ -67,6 +66,7 @@ public class App {
     public void PublishDataSchemaDefinitions(IRIS iris, IRISConnection conn, int dataSourceId) {
         System.out.println("PublishDataSchemaDefinitions() dataSourceId=" + dataSourceId);
 
+        int count = 0;
         try {
             String query = "SELECT ID FROM SDS_DataCatalog.DataSchemaDefinition WHERE DataSource = ?";
 
@@ -76,11 +76,11 @@ public class App {
 
             while (rs.next()) {
                 String id = rs.getString("ID");
-                System.out.println("DataSchemaDefinition id = " + id);
-
                 iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
-            }
 
+                count += 1;
+            }
+            System.out.println("Published " + count + " data schema definitions");
             stmt.close();
         }
 
@@ -104,6 +104,7 @@ public class App {
                 importRequest.set("DataSourceId", dataSourceId);
                 importRequest.set("MemberName", item.getString("memberName"));
                 // importRequest.set("SchemaName", item.getString("schemaName"));
+                importRequest.set("SendAsync", false);
 
                 dataCatalogService.invoke("ProcessInput", importRequest);
             }
@@ -119,7 +120,6 @@ public class App {
         System.out.println("GetDataSourceItems() dataSourceId=" + dataSourceId);
 
         JSONArray itemsArray = null;
-
         try {
             URL url = new URL("http://localhost:8081/intersystems/data-loader/v1/dataSources/"+dataSourceId+"/schemas/members");
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
