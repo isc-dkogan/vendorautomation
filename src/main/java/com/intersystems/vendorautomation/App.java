@@ -48,7 +48,7 @@ public class App {
 
             newDataSource.set("Name", newDataSourceName);
 
-            Object sc = newDataSource.invoke("%Save");
+            Long sc = (Long) newDataSource.invoke("%Save");
 
             String id = (String) newDataSource.invoke("%Id");
 
@@ -76,7 +76,7 @@ public class App {
 
             while (rs.next()) {
                 String id = rs.getString("ID");
-                iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
+                Long sc = (Long) iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
 
                 count += 1;
             }
@@ -106,7 +106,7 @@ public class App {
                 // importRequest.set("SchemaName", item.getString("schemaName"));
                 importRequest.set("SendAsync", false);
 
-                dataCatalogService.invoke("ProcessInput", importRequest);
+                Long sc = (Long) dataCatalogService.invoke("ProcessInput", importRequest);
             }
 
         }
