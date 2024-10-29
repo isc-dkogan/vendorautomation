@@ -14,31 +14,72 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.util.Base64;
-import java.util.Set;
 import java.sql.Statement;
+import java.util.*;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+
 public class App {
+
+    private IRISConnection connection;
+    private IRIS iris;
+
+    private Set<String> groups;
+    private Set<String> tables;
+    private Map<String, List<String>> groupTableMapping;
+
+    private int dataSourceId;
+
+    private Map<String, String> tableIds = new HashMap<>();
+    private Map<String, List<String>> tableFields = new HashMap<>();
+
     public static void main(String[] args) throws Exception {
         System.out.println("Hello, World!");
 
-        IrisDatabaseConnection conn = new IrisDatabaseConnection();
-        IRISDataSource dataSource = conn.createDataSource();
-        IRISConnection connection = (IRISConnection) dataSource.getConnection();
-        IRIS iris = IRIS.createIRIS(connection);
-
         App app = new App();
-        int newDataSourceId = app.DuplicateDataSource(iris, 2, "ISCSalesforcePackage");
-        JSONArray dataSourceItems = app.GetDataSourceItems(newDataSourceId);
-        app.ImportDataSchemaDefinitions(iris, newDataSourceId, dataSourceItems);
-        app.PublishDataSchemaDefinitions(iris, connection, newDataSourceId);
+
+        app.SetMapping();
+
+        app.ConnectToIRIS();
+
+        int newDataSourceId = app.DuplicateDataSource(2, "ISCSalesforcePackage");
+        app.SetDataSourceId(newDataSourceId);
+
+        // JSONArray dataSourceItems = app.GetDataSourceItems();
+        // app.ImportDataSchemaDefinitions(dataSourceItems);
+        // app.PublishDataSchemaDefinitions();
+        app.SetDataSchemaDefinitionInformation();
+        // app.CreateRecipes();
     }
 
-    public int DuplicateDataSource(IRIS iris, int dataSourceId, String newDataSourceName) {
-        System.out.println("DuplicateDataSource() dataSourceId=" + dataSourceId);
+    private void SetMapping() {
+        System.out.println("SetMapping()");
+
+        ExcelReader excelReader = new ExcelReader("src/files/mapping.xlsx");
+        groups = excelReader.getUniqueGroupNames();
+        tables = excelReader.getAllTableNames();
+        groupTableMapping = excelReader.getGroupTableMap();
+    }
+
+    private void ConnectToIRIS() throws Exception {
+        System.out.println("ConnectToIRIS()");
+
+        IrisDatabaseConnection conn = new IrisDatabaseConnection();
+        IRISDataSource dataSource = conn.createDataSource();
+        connection = (IRISConnection) dataSource.getConnection();
+        iris = IRIS.createIRIS(connection);
+    }
+
+    private void SetDataSourceId(int dataSourceId) {
+        System.out.println("SetDataSourceId()");
+
+        this.dataSourceId = dataSourceId;
+    }
+
+    public int DuplicateDataSource(int dataSourceId, String newDataSourceName) {
+        System.out.println("DuplicateDataSource()");
 
         int newDataSourceId = 0;
         try {
@@ -60,64 +101,10 @@ public class App {
         }
 
         return newDataSourceId;
-
     }
 
-    public void PublishDataSchemaDefinitions(IRIS iris, IRISConnection conn, int dataSourceId) {
-        System.out.println("PublishDataSchemaDefinitions() dataSourceId=" + dataSourceId);
-
-        int count = 0;
-        try {
-            String query = "SELECT ID FROM SDS_DataCatalog.DataSchemaDefinition WHERE DataSource = ?";
-
-            PreparedStatement stmt = conn.prepareStatement(query);
-            stmt.setInt(1, dataSourceId);
-            ResultSet rs = stmt.executeQuery();
-
-            while (rs.next()) {
-                String id = rs.getString("ID");
-                Long sc = (Long) iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
-
-                count += 1;
-            }
-            System.out.println("Published " + count + " data schema definitions");
-            stmt.close();
-        }
-
-        catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void ImportDataSchemaDefinitions(IRIS iris, int dataSourceId, JSONArray itemsArray) {
-        System.out.println("ImportDataSchemaDefinitions() dataSourceId=" + dataSourceId);
-
-        try {
-            IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
-
-            for (int i = 0; i < itemsArray.length(); i++) {
-                JSONObject item = itemsArray.getJSONObject(i);
-                System.out.println("Item " + (i + 1) + ": " + item.toString());
-
-                IRISObject importRequest = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BO.ImportRequest", "%New");
-                importRequest.set("BatchId", 1);
-                importRequest.set("DataSourceId", dataSourceId);
-                importRequest.set("MemberName", item.getString("memberName"));
-                // importRequest.set("SchemaName", item.getString("schemaName"));
-                importRequest.set("SendAsync", false);
-
-                Long sc = (Long) dataCatalogService.invoke("ProcessInput", importRequest);
-            }
-
-        }
-
-        catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public JSONArray GetDataSourceItems(int dataSourceId) {
-        System.out.println("GetDataSourceItems() dataSourceId=" + dataSourceId);
+    public JSONArray GetDataSourceItems() {
+        System.out.println("GetDataSourceItems()");
 
         JSONArray itemsArray = null;
         try {
@@ -164,6 +151,154 @@ public class App {
         }
 
         return itemsArray;
+    }
 
+    public void ImportDataSchemaDefinitions(JSONArray itemsArray) {
+        System.out.println("ImportDataSchemaDefinitions()");
+
+        try {
+            IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
+
+            for (int i = 0; i < itemsArray.length(); i++) {
+                JSONObject item = itemsArray.getJSONObject(i);
+                System.out.println("Item " + (i + 1) + ": " + item.toString());
+
+                IRISObject importRequest = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BO.ImportRequest", "%New");
+                importRequest.set("BatchId", 1);
+                importRequest.set("DataSourceId", dataSourceId);
+                importRequest.set("MemberName", item.getString("memberName"));
+                // importRequest.set("SchemaName", item.getString("schemaName"));
+                importRequest.set("SendAsync", false);
+
+                Long sc = (Long) dataCatalogService.invoke("ProcessInput", importRequest);
+            }
+
+        }
+
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void SetDataSchemaDefinitionInformation() {
+        System.out.println("SetDataSchemaDefinitionInformation()");
+
+        try {
+            String query = "SELECT dsd.ID, dsd.DataSourceItemName, dsf.FieldName \n" +
+                            "FROM SDS_DataCatalog.DataSchemaDefinition AS dsd \n" +
+                            "JOIN SDS_DataCatalog.DataSchemaField AS dsf \n" +
+                            "ON dsd.ID = dsf.DataSchema \n" +
+                            "WHERE dsd.DataSource = ?";
+
+
+            PreparedStatement stmt = connection.prepareStatement(query);
+            stmt.setInt(1, dataSourceId);
+            ResultSet rs = stmt.executeQuery();
+
+            while (rs.next()) {
+                String id = rs.getString("ID");
+                String table = rs.getString("DataSourceItemName");
+                String field = rs.getString("FieldName");
+
+                tableIds.put(table, id);
+                tableFields.computeIfAbsent(table, k -> new ArrayList<>()).add(field);
+            }
+            stmt.close();
+
+            tableIds.forEach((key, value) -> System.out.println("table: " + key + ", id: " + value));
+            // tableFields.forEach((key, value) -> System.out.println("table: " + key + ", fields: " + value));
+        }
+
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void PublishDataSchemaDefinitions() {
+        System.out.println("PublishDataSchemaDefinitions()");
+
+        int count = 0;
+        try {
+            String query = "SELECT ID FROM SDS_DataCatalog.DataSchemaDefinition WHERE DataSource = ?";
+
+            PreparedStatement stmt = connection.prepareStatement(query);
+            stmt.setInt(1, dataSourceId);
+            ResultSet rs = stmt.executeQuery();
+
+            while (rs.next()) {
+                String id = rs.getString("ID");
+                Long sc = (Long) iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
+
+                count += 1;
+            }
+            System.out.println("Published " + count + " data schema definitions");
+            stmt.close();
+        }
+
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void CreateRecipes() {
+        System.out.println("CreateRecipes()");
+
+        try {
+            // IRISObject recipeGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipeGroup.v1.recipeGroupCreate", "%New");
+            // recipeGroupCreateObj.set("groupName", "ISCSalesforcePackageRecipes");
+            // iris.classMethodObject("SDS.API.RecipeGroupAPI", "RecipeGroupCreate", recipeGroupCreateObj);
+
+            for (String group : groups) {
+                IRISObject recipeCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreate", "%New");
+                recipeCreateObj.set("name", group);
+                recipeCreateObj.set("shortName", group);
+                // recipeGroupCreateObj.set("groupId", );
+
+                IRISObject recipeCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreateResponse", "%New");
+                recipeCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "RecipeCreate", recipeCreateObj);
+
+                IRISObject stagingActivityCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityCreate", "%New");
+                stagingActivityCreateObj.set("name", "StagingActivity");
+                stagingActivityCreateObj.set("shortName", "SA");
+                stagingActivityCreateObj.set("dataSourceId", dataSourceId);
+
+                IRISObject stagingActivityCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityCreateResponse", "%New");
+                stagingActivityCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivityCreate", recipeCreateRespObj.get("id"), stagingActivityCreateObj);
+
+                IRISObject stagingActivityUpdateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityUpdate", "%New");
+                stagingActivityUpdateObj.set("name", stagingActivityCreateRespObj.get("name"));
+
+                List<String> groupTables = groupTableMapping.get(group);
+                IRISObject[] dataSchemas = new IRISObject[groupTables.size()];
+                for (int i = 0; i < groupTables.size(); i++) {
+                    String table = groupTables.get(i);
+
+                    IRISObject stagingActivityUpdateItemObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityUpdateItem", "%New");
+
+                    stagingActivityUpdateItemObj.set("id", tableIds.get(table));
+
+                    List<String> fields = tableFields.get(table);
+                    IRISObject[] dataSchemaFields = new IRISObject[fields.size()];
+                    for (int j = 0; j < fields.size(); j++) {
+                        String field = fields.get(i);
+
+                        IRISObject stagingActivityItemUpdateItemObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityItemUpdateItem", "%New");
+                        stagingActivityItemUpdateItemObj.set("name", field);
+                        stagingActivityItemUpdateItemObj.set("selected", true);
+                        dataSchemaFields[j] = stagingActivityItemUpdateItemObj;
+                    }
+
+                    stagingActivityUpdateItemObj.set("dataSchemaFields", dataSchemaFields);
+                    stagingActivityUpdateItemObj.set("selected", true);
+
+                    dataSchemas[i] = stagingActivityUpdateItemObj;
+                }
+                stagingActivityUpdateObj.set("dataSchemas", dataSchemas);
+            }
+        }
+
+        catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }

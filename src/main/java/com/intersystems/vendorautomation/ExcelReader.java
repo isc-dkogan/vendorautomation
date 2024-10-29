@@ -40,6 +40,14 @@ public class ExcelReader {
         return groupTableMap.keySet();
     }
 
+    public Set<String> getAllTableNames() {
+        Set<String> allTables = new HashSet<>();
+        for (List<String> tables : groupTableMap.values()) {
+            allTables.addAll(tables);
+        }
+        return allTables;
+    }
+
     public Map<String, List<String>> getGroupTableMap() {
         return groupTableMap;
     }
