@@ -23,14 +23,14 @@ import org.json.JSONObject;
 
 public class App {
 
-    private IRISConnection connection;
-    private IRIS iris;
-
     private Set<String> groups;
     private Set<String> tables;
     private Map<String, List<String>> groupTableMapping;
 
-    private int dataSourceId;
+    private IRISConnection connection;
+    private IRIS iris;
+
+    private int dataSourceId = 3;
 
     private Map<String, String> tableIds = new HashMap<>();
     private Map<String, List<String>> tableFields = new HashMap<>();
@@ -44,14 +44,14 @@ public class App {
 
         app.ConnectToIRIS();
 
-        int newDataSourceId = app.DuplicateDataSource(2, "ISCSalesforcePackage");
-        app.SetDataSourceId(newDataSourceId);
+        // int newDataSourceId = app.DuplicateDataSource(2, "ISCSalesforcePackage");
+        // app.SetDataSourceId(newDataSourceId);
 
         // JSONArray dataSourceItems = app.GetDataSourceItems();
         // app.ImportDataSchemaDefinitions(dataSourceItems);
         // app.PublishDataSchemaDefinitions();
         app.SetDataSchemaDefinitionInformation();
-        // app.CreateRecipes();
+        app.CreateRecipes();
     }
 
     private void SetMapping() {
@@ -204,9 +204,6 @@ public class App {
                 tableFields.computeIfAbsent(table, k -> new ArrayList<>()).add(field);
             }
             stmt.close();
-
-            tableIds.forEach((key, value) -> System.out.println("table: " + key + ", id: " + value));
-            // tableFields.forEach((key, value) -> System.out.println("table: " + key + ", fields: " + value));
         }
 
         catch (Exception e) {
@@ -227,7 +224,7 @@ public class App {
 
             while (rs.next()) {
                 String id = rs.getString("ID");
-                Long sc = (Long) iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
+                iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
 
                 count += 1;
             }
@@ -252,7 +249,7 @@ public class App {
                 IRISObject recipeCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreate", "%New");
                 recipeCreateObj.set("name", group);
                 recipeCreateObj.set("shortName", group);
-                // recipeGroupCreateObj.set("groupId", );
+                // recipeCreateObj.set("groupId", );
 
                 IRISObject recipeCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreateResponse", "%New");
                 recipeCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "RecipeCreate", recipeCreateObj);
@@ -267,9 +264,10 @@ public class App {
 
                 IRISObject stagingActivityUpdateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityUpdate", "%New");
                 stagingActivityUpdateObj.set("name", stagingActivityCreateRespObj.get("name"));
+                stagingActivityUpdateObj.set("saveVersion", 1);
 
                 List<String> groupTables = groupTableMapping.get(group);
-                IRISObject[] dataSchemas = new IRISObject[groupTables.size()];
+                IRISObject dataSchemas = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
                 for (int i = 0; i < groupTables.size(); i++) {
                     String table = groupTables.get(i);
 
@@ -278,22 +276,28 @@ public class App {
                     stagingActivityUpdateItemObj.set("id", tableIds.get(table));
 
                     List<String> fields = tableFields.get(table);
-                    IRISObject[] dataSchemaFields = new IRISObject[fields.size()];
+                    if (fields == null) {
+                        System.out.println("null fields for table: " + table);
+                        continue;
+                    }
+                    IRISObject dataSchemaFields = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
                     for (int j = 0; j < fields.size(); j++) {
-                        String field = fields.get(i);
+                        String field = fields.get(j);
 
                         IRISObject stagingActivityItemUpdateItemObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityItemUpdateItem", "%New");
                         stagingActivityItemUpdateItemObj.set("name", field);
                         stagingActivityItemUpdateItemObj.set("selected", true);
-                        dataSchemaFields[j] = stagingActivityItemUpdateItemObj;
-                    }
 
+                        dataSchemaFields.invoke("Insert", stagingActivityItemUpdateItemObj);
+                    }
                     stagingActivityUpdateItemObj.set("dataSchemaFields", dataSchemaFields);
                     stagingActivityUpdateItemObj.set("selected", true);
 
-                    dataSchemas[i] = stagingActivityUpdateItemObj;
+                    dataSchemas.invoke("Insert", stagingActivityUpdateItemObj);
                 }
                 stagingActivityUpdateObj.set("dataSchemas", dataSchemas);
+
+                iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivityUpdate", recipeCreateRespObj.get("id"), stagingActivityUpdateObj);
             }
         }
 
