@@ -1,7 +1,5 @@
 package com.intersystems.vendorautomation;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 
 import com.intersystems.jdbc.IRIS;
@@ -19,6 +17,8 @@ import java.util.*;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.Yaml;
 
 
 public class App {
@@ -33,6 +33,7 @@ public class App {
     private int dataSourceId = 3;
 
     private Map<String, String> tableIds = new HashMap<>();
+    private Map<String, String> tableGuids = new HashMap<>();
     private Map<String, List<String>> tableFields = new HashMap<>();
 
     public static void main(String[] args) throws Exception {
@@ -51,7 +52,8 @@ public class App {
         // app.ImportDataSchemaDefinitions(dataSourceItems);
         // app.PublishDataSchemaDefinitions();
         app.SetDataSchemaDefinitionInformation();
-        app.CreateRecipes();
+        // app.CreateRecipes();
+        app.createRecipeYAMLs();
     }
 
     private void SetMapping() {
@@ -184,7 +186,7 @@ public class App {
         System.out.println("SetDataSchemaDefinitionInformation()");
 
         try {
-            String query = "SELECT dsd.ID, dsd.DataSourceItemName, dsf.FieldName \n" +
+            String query = "SELECT dsd.ID, dsd.AssignedGUID, dsd.DataSourceItemName, dsf.FieldName \n" +
                             "FROM SDS_DataCatalog.DataSchemaDefinition AS dsd \n" +
                             "JOIN SDS_DataCatalog.DataSchemaField AS dsf \n" +
                             "ON dsd.ID = dsf.DataSchema \n" +
@@ -197,10 +199,12 @@ public class App {
 
             while (rs.next()) {
                 String id = rs.getString("ID");
+                String guid = rs.getString("AssignedGUID");
                 String table = rs.getString("DataSourceItemName");
                 String field = rs.getString("FieldName");
 
                 tableIds.put(table, id);
+                tableGuids.put(table, guid);
                 tableFields.computeIfAbsent(table, k -> new ArrayList<>()).add(field);
             }
             stmt.close();
@@ -224,7 +228,9 @@ public class App {
 
             while (rs.next()) {
                 String id = rs.getString("ID");
-                iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
+
+                IRISObject schemaDefinitionSessionCloseRespObj = (IRISObject) iris.classMethodObject("intersystems.dataCatalog.v1.browser.DataSchemaDefinitionSessionResponse", "%New");
+                schemaDefinitionSessionCloseRespObj = (IRISObject) iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
 
                 count += 1;
             }
@@ -297,12 +303,99 @@ public class App {
                 }
                 stagingActivityUpdateObj.set("dataSchemas", dataSchemas);
 
-                iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivityUpdate", recipeCreateRespObj.get("id"), stagingActivityUpdateObj);
+                IRISObject stagingActivityUpdateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityUpdateResponse", "%New");
+                stagingActivityUpdateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivityUpdate", stagingActivityCreateRespObj.get("id"), stagingActivityUpdateObj);
+
+                System.out.println("id: " + stagingActivityUpdateRespObj.get("id"));
+
+                // IRISObject stagingActivity = (IRISObject) iris.classMethodObject("SDS.DataLoader.Staging.StagingActivity", "%OpenId", stagingActivityUpdateRespObj.get("id"));
+                // stagingActivity.set("Editing", false);
+                // Long sc = (Long) stagingActivity.invoke("%Save");
+
+                IRISObject stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivitySessionResponse", "%New");
+                stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivitySessionClose", stagingActivityUpdateRespObj.get("id"), true, false);
             }
         }
 
         catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    public void createRecipeYAMLs() throws IOException {
+        DumperOptions options = new DumperOptions();
+        options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
+
+        for (String group : groups) {
+            Yaml yaml = new Yaml(options);
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("apiVersion", "v1");
+            data.put("kind", "TotalViewRecipe");
+
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("guid", "");
+            metadata.put("version", "1");
+
+            data.put("metadata", metadata);
+
+            Map<String, Object> spec = new HashMap<>();
+            spec.put("name", group);
+            spec.put("shortName", group);
+            spec.put("recordStepModeActive", "");
+            spec.put("maxRows", "0");
+            spec.put("recipeActiveStatus", "Active");
+            spec.put("groupName", "");
+
+            List<Map<String, Object>> stagingActivities = new ArrayList<>();
+            Map<String, Object> stagingActivity = new HashMap<>();
+            stagingActivity.put("dataSourceName", "");
+            stagingActivity.put("createUser", "");
+            stagingActivity.put("disableUser", "");
+            stagingActivity.put("name", "StagingActivity");
+            stagingActivity.put("shortName", "SA");
+
+            List<Map<String, Object>> items = new ArrayList<>();
+
+            List<String> groupTables = groupTableMapping.get(group);
+            for (int i = 0; i < groupTables.size(); i++) {
+                String table = groupTables.get(i);
+
+                Map<String, Object> item = new HashMap<>();
+                item.put("dataSchemaDefinition", tableGuids.get(table));
+                item.put("customTargetTable", "");
+                item.put("sqlQuickLoad", "1");
+                item.put("actionOnDroppedRecords", "");
+                item.put("maxDroppedRecords", "");
+                item.put("removeFileWhenDoneReading", "0");
+
+                List<String> fields = tableFields.get(table);
+                if (fields == null) {
+                    System.out.println("null fields for table: " + table);
+                    continue;
+                }
+
+                List<String> fieldList = new ArrayList<>();
+                for (int j = 0; j < fields.size(); j++) {
+                    String field = fields.get(j);
+
+                    fieldList.add(field);
+                }
+
+                item.put("fieldList", fieldList);
+                items.add(item);
+            }
+
+            stagingActivity.put("items", items);
+            stagingActivities.add(stagingActivity);
+
+            spec.put("stagingActivities", stagingActivities);
+
+            data.put("spec", spec);
+
+            try (FileWriter writer = new FileWriter(group+"Recipe.yaml")) {
+                yaml.dump(data, writer);
+            }
         }
     }
 }
