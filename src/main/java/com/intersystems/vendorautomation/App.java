@@ -393,7 +393,7 @@ public class App {
 
             data.put("spec", spec);
 
-            try (FileWriter writer = new FileWriter(group+"Recipe.yaml")) {
+            try (FileWriter writer = new FileWriter(group+".TotalViewRecipe")) {
                 yaml.dump(data, writer);
             }
         }
