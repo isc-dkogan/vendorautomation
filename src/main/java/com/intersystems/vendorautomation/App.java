@@ -18,6 +18,7 @@ import java.util.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.DumperOptions.FlowStyle;
 import org.yaml.snakeyaml.Yaml;
 
 
@@ -26,15 +27,15 @@ public class App {
     private Set<String> groups;
     private Set<String> tables;
     private Map<String, List<String>> groupTableMapping;
+    private Map<String, String> tableIds = new HashMap<>();
+    private Map<String, String> tableGuids = new HashMap<>();
+    private Map<String, List<String>> tableFields = new HashMap<>();
 
     private IRISConnection connection;
     private IRIS iris;
 
     private int dataSourceId = 3;
-
-    private Map<String, String> tableIds = new HashMap<>();
-    private Map<String, String> tableGuids = new HashMap<>();
-    private Map<String, List<String>> tableFields = new HashMap<>();
+    private String dataSourceType;
 
     public static void main(String[] args) throws Exception {
         System.out.println("Hello, World!");
@@ -45,7 +46,7 @@ public class App {
 
         app.ConnectToIRIS();
 
-        // int newDataSourceId = app.DuplicateDataSource(2, "ISCSalesforcePackage");
+        // int newDataSourceId = app.DuplicateDataSource(args[0]);
         // app.SetDataSourceId(newDataSourceId);
 
         // JSONArray dataSourceItems = app.GetDataSourceItems();
@@ -80,7 +81,7 @@ public class App {
         this.dataSourceId = dataSourceId;
     }
 
-    public int DuplicateDataSource(int dataSourceId, String newDataSourceName) {
+    public int DuplicateDataSource(int dataSourceId) {
         System.out.println("DuplicateDataSource()");
 
         int newDataSourceId = 0;
@@ -89,7 +90,8 @@ public class App {
 
             IRISObject newDataSource = (IRISObject) originalDataSource.invoke("%ConstructClone", 0);
 
-            newDataSource.set("Name", newDataSourceName);
+            this.dataSourceType = (String) newDataSource.invoke("%GetParameter", "DATASOURCENAME");
+            newDataSource.set("Name", "ISC" + this.dataSourceType + "PackageSource");
 
             Long sc = (Long) newDataSource.invoke("%Save");
 
@@ -322,6 +324,39 @@ public class App {
         }
     }
 
+    public void createDataSchemaDefinitionYAMLs() throws IOException {
+        DumperOptions options = new DumperOptions();
+        options.setDefaultFlowStyle(FlowStyle.BLOCK);
+
+        Yaml yaml = new Yaml(options);
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("apiVersion", "v1");
+        data.put("kind", "TotalViewDataSchemaDefinition");
+
+        // Metadata map
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("version", 2);
+        data.put("metadata", metadata);
+
+        // Spec map
+        Map<String, Object> spec = new HashMap<>();
+        for (String table : tables) {
+            spec.put("name", "ISC" + this.dataSourceType + "Package" + "-" + table);
+            spec.put("dataSourceItemName", table);
+            spec.put("extractionStrategy", "Simple Load");
+            spec.put("extractionStrategyField", "");
+            spec.put("ObjectName", table);
+            spec.put("catalogDescription", "");
+            List<String> primaryKeyFieldList = new ArrayList<>();
+            spec.put("primaryKeyFieldList", primaryKeyFieldList);
+            spec.put("entityName", table);
+            spec.put("dataSource", "ISC" + this.dataSourceType + "Package");
+
+            List<Map<String, Object>> fields = new ArrayList<>();
+        }
+    }
+
     public void createRecipeYAMLs() throws IOException {
         DumperOptions options = new DumperOptions();
         options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
@@ -345,11 +380,11 @@ public class App {
             spec.put("recordStepModeActive", "");
             spec.put("maxRows", "0");
             spec.put("recipeActiveStatus", "Active");
-            spec.put("groupName", "");
+            spec.put("groupName", "ISC" + this.dataSourceType + "Package");
 
             List<Map<String, Object>> stagingActivities = new ArrayList<>();
             Map<String, Object> stagingActivity = new HashMap<>();
-            stagingActivity.put("dataSourceName", "");
+            stagingActivity.put("dataSourceName", "ISC" + this.dataSourceType + "PackageSource");
             stagingActivity.put("createUser", "");
             stagingActivity.put("disableUser", "");
             stagingActivity.put("name", "StagingActivity");
