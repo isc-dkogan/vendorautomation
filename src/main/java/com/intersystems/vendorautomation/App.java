@@ -388,21 +388,32 @@ public class App {
             stagingActivity.put("createUser", "");
             stagingActivity.put("disableUser", "");
             stagingActivity.put("name", "StagingActivity");
-            stagingActivity.put("shortName", "SA");
+            stagingActivity.put("shortName", "sa");
 
-            List<Map<String, Object>> items = new ArrayList<>();
+            List<Map<String, Object>> stagingItems = new ArrayList<>();
+
+            List<Map<String, Object>> promotionActivities = new ArrayList<>();
+            Map<String, Object> promotionActivity = new HashMap<>();
+            promotionActivity.put("name", "Promotion Activity");
+            promotionActivity.put("runOrder", 1);
+            promotionActivity.put("createUser", "");
+            promotionActivity.put("disableUser", "");
+            promotionActivity.put("promotionType", "Internal");
+            promotionActivity.put("targetConnection", "");
+
+            List<Map<String, Object>> promotionItems = new ArrayList<>();
 
             List<String> groupTables = groupTableMapping.get(group);
             for (int i = 0; i < groupTables.size(); i++) {
                 String table = groupTables.get(i);
 
-                Map<String, Object> item = new HashMap<>();
-                item.put("dataSchemaDefinition", tableGuids.get(table));
-                item.put("customTargetTable", "");
-                item.put("sqlQuickLoad", "1");
-                item.put("actionOnDroppedRecords", "");
-                item.put("maxDroppedRecords", "");
-                item.put("removeFileWhenDoneReading", "0");
+                Map<String, Object> stagingItem = new HashMap<>();
+                stagingItem.put("dataSchemaDefinition", tableGuids.get(table));
+                stagingItem.put("customTargetTable", "");
+                stagingItem.put("sqlQuickLoad", 1);
+                stagingItem.put("actionOnDroppedRecords", "");
+                stagingItem.put("maxDroppedRecords", "");
+                stagingItem.put("removeFileWhenDoneReading", "0");
 
                 List<String> fields = tableFields.get(table);
                 if (fields == null) {
@@ -417,14 +428,44 @@ public class App {
                     fieldList.add(field);
                 }
 
-                item.put("fieldList", fieldList);
-                items.add(item);
+                stagingItem.put("fieldList", fieldList);
+                stagingItems.add(stagingItem);
+
+                Map<String, Object> promotionUpdateItem = new HashMap<>();
+                promotionUpdateItem.put("createdBy", "");
+                String updateSqlExpression = String.format(
+                    "UPDATE ISC_%s_%s.%s tt\n" +
+                    "SET UpdateTimestamp = CURRENT_TIMESTAMP, UpdateUser = USER\n" +
+                    "FROM {sa}.%s st WHERE st.%%BatchId={%%BatchId}",
+                    dataSourceType, group, table, table
+                );
+                promotionUpdateItem.put("sqlExpression", updateSqlExpression);
+                promotionUpdateItem.put("description", "");
+                promotionUpdateItem.put("runOrder", (i+1)*10);
+
+                Map<String, Object> promotionInsertItem = new HashMap<>();
+                promotionInsertItem.put("createdBy", "");
+                String insertSqlExpression = String.format(
+                                                            "INSERT ISC_%s_%s.%s(%s)\n" +
+                                                            "SELECT %s\n" +
+                                                            "FROM {sa}.%s ta WHERE %%BatchId={%%BatchId}",
+                                                            dataSourceType, group, table, String.join(", ", fieldList), String.join(", ", fieldList), table
+                                                    );
+                promotionInsertItem.put("sqlExpression", insertSqlExpression);
+                promotionInsertItem.put("description", "");
+                promotionInsertItem.put("runOrder", (i+1)*10 + 1);
+
+                promotionItems.add(promotionUpdateItem);
+                promotionItems.add(promotionInsertItem);
             }
 
-            stagingActivity.put("items", items);
+            stagingActivity.put("items", stagingItems);
             stagingActivities.add(stagingActivity);
+            promotionActivity.put("items", promotionItems);
+            promotionActivities.add(promotionActivity);
 
             spec.put("stagingActivities", stagingActivities);
+            spec.put("promotionActivities", promotionActivities);
 
             data.put("spec", spec);
 
