@@ -354,6 +354,40 @@ public class App {
             spec.put("dataSource", "ISC" + this.dataSourceType + "Package");
 
             List<Map<String, Object>> fields = new ArrayList<>();
+
+            IRISObject businessOperation = (IRISObject) iris.classMethodObject("SDS.DataLoader.BO."+dataSourceType+".Operation", "%New");
+            IRISObject memberDefResponseObj = (IRISObject) iris.classMethodObject("SDS.DataLoader.BO.DataSource.V1.Response.MemberDefResponse", "%New");
+
+            IRISObject dataSource = (IRISObject) iris.classMethodObject("SDS.DataLoader.DS.DataSource", "%OpenId", dataSourceId);
+            memberDefResponseObj = (IRISObject) businessOperation.invoke("GenerateMemberDefFromObject", dataSource, table);
+
+            IRISObject columns = (IRISObject) memberDefResponseObj.get("Columns");
+            for (int i = 1; i < (int) iris.classMethodObject("%Library.ListOfObjects", "Count", columns); i++) {
+                IRISObject column = (IRISObject) columns.invoke("GetAt", i);
+
+                Map<String, Object> field = new HashMap<>();
+                field.put("fieldName", column.get("FieldName"));
+                field.put("fieldType", column.get("FieldType"));
+                field.put("minVal", column.get("MinVal"));
+                field.put("maxVal", column.get("MaxVal"));
+                field.put("scale", column.get("Scale"));
+                field.put("required", column.get("Required"));
+                field.put("length", column.get("Length"));
+                field.put("defaultValue", column.get("DefaultValue"));
+                field.put("dataFormat", column.get("DataFormat"));
+                field.put("srcDataType", column.get("SrcDataType"));
+                field.put("fieldDescription", column.get("FieldDescription"));
+
+                fields.add(field);
+            }
+
+            spec.put("fields", fields);
+
+            data.put("spec", spec);
+
+            try (FileWriter writer = new FileWriter(table+".TotalViewDataSchemaDefinition")) {
+                yaml.dump(data, writer);
+            }
         }
     }
 
