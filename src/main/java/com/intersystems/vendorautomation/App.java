@@ -422,22 +422,31 @@ public class App {
                 }
 
                 List<String> fieldList = new ArrayList<>();
+                List<String> modifiedFieldList = new ArrayList<>();
                 for (int j = 0; j < fields.size(); j++) {
                     String field = fields.get(j);
 
                     fieldList.add(field);
+                    if (iris.classMethodBoolean("%SYSTEM.SQL", "IsReservedWord", field)) {
+                        modifiedFieldList.add("\"" + field + "\"");
+                    }
+                    else {
+                        modifiedFieldList.add(field);
+                    }
                 }
 
                 stagingItem.put("fieldList", fieldList);
                 stagingItems.add(stagingItem);
 
+                String modifiedRecipeName = iris.classMethodBoolean("%SYSTEM.SQL", "IsReservedWord", group) ? "\"" + group + "\"" : group;
+                String modifiedTableName =iris.classMethodBoolean("%SYSTEM.SQL", "IsReservedWord", table) ? "\"" + table + "\"" : table;
                 Map<String, Object> promotionUpdateItem = new HashMap<>();
                 promotionUpdateItem.put("createdBy", "");
                 String updateSqlExpression = String.format(
                     "UPDATE ISC_%s_%s.%s tt\n" +
                     "SET UpdateTimestamp = CURRENT_TIMESTAMP, UpdateUser = USER\n" +
                     "FROM {sa}.%s st WHERE st.%%BatchId={%%BatchId}",
-                    dataSourceType, group, table, table
+                    dataSourceType, modifiedRecipeName, modifiedTableName, modifiedTableName
                 );
                 promotionUpdateItem.put("sqlExpression", updateSqlExpression);
                 promotionUpdateItem.put("description", "");
@@ -445,11 +454,12 @@ public class App {
 
                 Map<String, Object> promotionInsertItem = new HashMap<>();
                 promotionInsertItem.put("createdBy", "");
+                String fieldListString = String.join(", ", modifiedFieldList);
                 String insertSqlExpression = String.format(
                                                             "INSERT ISC_%s_%s.%s(%s)\n" +
                                                             "SELECT %s\n" +
                                                             "FROM {sa}.%s ta WHERE %%BatchId={%%BatchId}",
-                                                            dataSourceType, group, table, String.join(", ", fieldList), String.join(", ", fieldList), table
+                                                            dataSourceType, modifiedRecipeName, modifiedTableName, fieldListString, fieldListString, modifiedTableName
                                                     );
                 promotionInsertItem.put("sqlExpression", insertSqlExpression);
                 promotionInsertItem.put("description", "");
