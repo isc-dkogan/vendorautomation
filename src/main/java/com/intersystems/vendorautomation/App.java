@@ -36,16 +36,16 @@ public class App {
     private IRIS iris;
 
     private int dataSourceId = 3;
-    private String dataSourceType = "SalesForce";
+    private String dataSourceType = "Salesforce";
 
     public static void main(String[] args) throws Exception {
         System.out.println("Hello, World!");
 
-        App app = new App();
+        // App app = new App();
 
-        app.SetMapping();
+        // app.SetMapping();
 
-        app.ConnectToIRIS();
+        // app.ConnectToIRIS();
 
         // int newDataSourceId = app.DuplicateDataSource(args[0]);
         // app.SetDataSourceId(newDataSourceId);
@@ -58,7 +58,7 @@ public class App {
         // app.createDataSchemaDefinitionYAMLs();
         // app.createRecipeYAMLs();
 
-        // XMLProcessor xmlProcessor = new XMLProcessor();
+        XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "allclasses.xml", Arrays.asList("Staging"));
     }
 
     private void SetMapping() {
