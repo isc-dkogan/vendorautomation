@@ -58,8 +58,7 @@ public class App {
         // app.createDataSchemaDefinitionYAMLs();
         // app.createRecipeYAMLs();
 
-        XMLProcessor xmlProcessor = new XMLProcessor();
-        xmlProcessor.transformXML();
+        // XMLProcessor xmlProcessor = new XMLProcessor();
     }
 
     private void SetMapping() {
