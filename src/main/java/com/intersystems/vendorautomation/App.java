@@ -8,6 +8,7 @@ import com.intersystems.jdbc.IRISDataSource;
 import com.intersystems.jdbc.IRISObject;
 
 import java.io.*;
+import java.lang.annotation.Target;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.sql.PreparedStatement;
@@ -35,7 +36,7 @@ public class App {
     private IRIS iris;
 
     private int dataSourceId = 3;
-    private String dataSourceType;
+    private String dataSourceType = "SalesForce";
 
     public static void main(String[] args) throws Exception {
         System.out.println("Hello, World!");
@@ -52,9 +53,13 @@ public class App {
         // JSONArray dataSourceItems = app.GetDataSourceItems();
         // app.ImportDataSchemaDefinitions(dataSourceItems);
         // app.PublishDataSchemaDefinitions();
-        app.SetDataSchemaDefinitionInformation();
+        // app.SetDataSchemaDefinitionInformation();
         // app.CreateRecipes();
-        app.createRecipeYAMLs();
+        // app.createDataSchemaDefinitionYAMLs();
+        // app.createRecipeYAMLs();
+
+        XMLProcessor xmlProcessor = new XMLProcessor();
+        xmlProcessor.transformXML();
     }
 
     private void SetMapping() {
@@ -336,7 +341,7 @@ public class App {
 
         // Metadata map
         Map<String, Object> metadata = new HashMap<>();
-        metadata.put("version", 2);
+        metadata.put("version", 1);
         data.put("metadata", metadata);
 
         // Spec map
@@ -385,7 +390,7 @@ public class App {
 
             data.put("spec", spec);
 
-            try (FileWriter writer = new FileWriter(table+".TotalViewDataSchemaDefinition")) {
+            try (FileWriter writer = new FileWriter("schemadefs/"+table+".TotalViewDataSchemaDefinition")) {
                 yaml.dump(data, writer);
             }
         }
@@ -513,9 +518,52 @@ public class App {
 
             data.put("spec", spec);
 
-            try (FileWriter writer = new FileWriter(group+".TotalViewRecipe")) {
+            try (FileWriter writer = new FileWriter("recipes/"+group+".TotalViewRecipe")) {
                 yaml.dump(data, writer);
             }
         }
+    }
+
+    public void createScheduledTaskYAMLs() throws IOException {
+        DumperOptions options = new DumperOptions();
+        options.setDefaultFlowStyle(FlowStyle.BLOCK);
+
+        for (String group : groups) {
+            Yaml yaml = new Yaml(options);
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("apiVersion", "v1");
+            data.put("kind", "TotalViewScheduledTask");
+
+            // Metadata map
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("version", 1);
+            data.put("metadata", metadata);
+
+            // Spec map
+            Map<String, Object> spec = new HashMap<>();
+            spec.put("owner", "");
+            spec.put("taskDescription", group);
+            spec.put("schedulingType", "Manually Run");
+            spec.put("enabled", 1);
+            spec.put("scheduledTaskType", "Task");
+            Map<String, Object> schedulableResource = new HashMap<>();
+            schedulableResource.put("type", "Recipe");
+            schedulableResource.put("identifier", "");
+            spec.put("schedulableResource", schedulableResource);
+            spec.put("entity", "");
+            spec.put("exceptionWorkflowRole", "");
+            spec.put("businessEventTag", "ISC" + dataSourceType + "PackageTaskGroup");
+            spec.put("dependencyInactivityTimeout", "");
+            spec.put("schedulingGroup", "");
+            Map<String, Object> schedulingProperties = new HashMap<>();
+            schedulingProperties.put("dependencyInactivityTimeout", 300);
+            spec.put("schedulingProperties", schedulingProperties);
+
+            try (FileWriter writer = new FileWriter("scheduledtasks/"+group+".TotalViewScheduledTask")) {
+                yaml.dump(data, writer);
+            }
+        }
+
     }
 }
