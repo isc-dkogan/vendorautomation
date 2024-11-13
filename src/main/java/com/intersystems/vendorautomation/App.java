@@ -56,13 +56,13 @@ public class App {
         app.PublishDataSchemaDefinitions();
         app.SetDataSchemaDefinitionInformation();
         app.CreateRecipes();
-        Thread.sleep(5000);
+        app.waitForSchedulableResourceTablePopulation();
         app.CreateScheduledTasks();
+
+        // XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "src/files/allclasses.xml", Arrays.asList("Staging"));
 
         // app.createDataSchemaDefinitionYAMLs();
         // app.createRecipeYAMLs();
-
-        XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "src/files/allclasses.xml", Arrays.asList("Staging"));
     }
 
     private void SetMapping() {
@@ -390,6 +390,46 @@ public class App {
         }
     }
 
+    public boolean waitForSchedulableResourceTablePopulation() {
+        System.out.println("waitForSchedulableResourceTablePopulation()");
+
+        boolean tableUpdated = false;
+        long timeout = 10000;
+        long startTime = System.currentTimeMillis();
+
+        try {
+            String query = "Select GUID From SDS_BusinessScheduler.SchedulableResource";
+            PreparedStatement stmt = connection.prepareStatement(query);
+
+            while (!tableUpdated && (System.currentTimeMillis() - startTime) < timeout) {
+
+                ResultSet rs = stmt.executeQuery();
+
+                List<String> guids = new ArrayList<>();
+                while (rs.next()) {
+                    String guid = rs.getString("GUID");
+
+                    guids.add(guid);
+                }
+
+                tableUpdated = guids.containsAll(tableGuids.values());
+                Thread.sleep(500);
+            }
+
+            stmt.close();
+        }
+
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        if (!tableUpdated) {
+            System.out.println("Timeout reached before SchedulableResource table populated with new recipes. Cannot create Business Scheduler Tasks.");
+        }
+
+        return tableUpdated;
+    }
+
     public void CreateScheduledTasks() {
         System.out.println("CreateScheduledTasks()");
 
@@ -418,7 +458,6 @@ public class App {
             scheduledTaskCreateObj.set("successEmailTemplateId", 2);
             scheduledTaskCreateObj.set("taskDefinitionClassName", "SDS.DataLoader.RunRecipeTaskDefinition");
             scheduledTaskCreateObj.set("scheduledResourceGUID", recipeGuids.get(group));
-            // scheduledTaskCreateObj.set("scheduledResourceGUID", "F33A2926-A122-11EF-9702-0242AC140003");
 
             IRISObject scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreateResponse", "%New");
             scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.BusinessSchedulerAPI", "ScheduledTaskCreate", scheduledTaskCreateObj);
