@@ -44,7 +44,7 @@ public class App {
 
         App app = new App();
 
-        app.SetMapping();
+        app.setMapping();
 
         app.connectToIRIS();
 
@@ -67,8 +67,8 @@ public class App {
         // app.createRecipeYAMLs();
     }
 
-    private void SetMapping() {
-        System.out.println("SetMapping()");
+    private void setMapping() {
+        System.out.println("setMapping()");
 
         ExcelReader excelReader = new ExcelReader("src/files/mapping.xlsx");
         groups = excelReader.getUniqueGroupNames();
@@ -108,6 +108,8 @@ public class App {
             String id = (String) newDataSource.invoke("%Id");
 
             newDataSourceId = Integer.parseInt(id);
+
+            System.out.println("New data source created with id = " + newDataSourceId);
         }
 
         catch (Exception e) {
@@ -131,7 +133,6 @@ public class App {
             connection.setRequestProperty("Authorization", basicAuth);
 
             int responseCode = connection.getResponseCode();
-            System.out.println("Response Code: " + responseCode);
 
             if (responseCode == HttpURLConnection.HTTP_OK) {
                 BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
@@ -164,6 +165,7 @@ public class App {
             e.printStackTrace();
         }
 
+        System.out.println(itemsArray.length() + " items found");
         return itemsArray;
     }
 
@@ -176,7 +178,7 @@ public class App {
             // for (int i = 0; i < itemsArray.length(); i++) {
             for (int i = 0; i < 5; i++) {
                 JSONObject item = itemsArray.getJSONObject(i);
-                System.out.println("Item " + (i + 1) + ": " + item.toString());
+                System.out.print("\r" + (i + 1) + " items imported\n");
 
                 IRISObject importRequest = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BO.ImportRequest", "%New");
                 importRequest.set("BatchId", 1);
@@ -246,8 +248,8 @@ public class App {
                 schemaDefinitionSessionCloseRespObj = (IRISObject) iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionSessionClose", id, 1);
 
                 count += 1;
+                System.out.print("\r" + count + " data schema definitions published\n");
             }
-            System.out.println("Published " + count + " data schema definitions");
             stmt.close();
         }
 
@@ -265,7 +267,7 @@ public class App {
             // iris.classMethodObject("SDS.API.RecipeGroupAPI", "RecipeGroupCreate", recipeGroupCreateObj);
 
             for (String group : groups) {
-                System.out.println(group);
+                System.out.println("Creating " + group + " recipe");
                 IRISObject recipeCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreate", "%New");
                 recipeCreateObj.set("name", group);
                 recipeCreateObj.set("shortName", group);
@@ -609,7 +611,7 @@ public class App {
 
                 List<String> fields = tableFields.get(table);
                 if (fields == null) {
-                    // System.out.println("null fields for table: " + table);
+                    System.out.println("null fields for table: " + table);
                     continue;
                 }
 
