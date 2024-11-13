@@ -31,34 +31,38 @@ public class App {
     private Map<String, String> tableIds = new HashMap<>();
     private Map<String, String> tableGuids = new HashMap<>();
     private Map<String, List<String>> tableFields = new HashMap<>();
+    private Map<String, String> recipeGuids = new HashMap<>();
 
     private IRISConnection connection;
     private IRIS iris;
 
-    private int dataSourceId = 3;
-    private String dataSourceType = "Salesforce";
+    private int dataSourceId;
+    private String dataSourceType;
 
     public static void main(String[] args) throws Exception {
         System.out.println("Hello, World!");
 
-        // App app = new App();
+        App app = new App();
 
-        // app.SetMapping();
+        app.SetMapping();
 
-        // app.ConnectToIRIS();
+        app.ConnectToIRIS();
 
-        // int newDataSourceId = app.DuplicateDataSource(args[0]);
-        // app.SetDataSourceId(newDataSourceId);
+        int newDataSourceId = app.DuplicateDataSource(Integer.parseInt(args[0]));
+        app.SetDataSourceId(newDataSourceId);
 
-        // JSONArray dataSourceItems = app.GetDataSourceItems();
-        // app.ImportDataSchemaDefinitions(dataSourceItems);
-        // app.PublishDataSchemaDefinitions();
-        // app.SetDataSchemaDefinitionInformation();
-        // app.CreateRecipes();
+        JSONArray dataSourceItems = app.GetDataSourceItems();
+        app.ImportDataSchemaDefinitions(dataSourceItems);
+        app.PublishDataSchemaDefinitions();
+        app.SetDataSchemaDefinitionInformation();
+        app.CreateRecipes();
+        Thread.sleep(5000);
+        app.CreateScheduledTasks();
+
         // app.createDataSchemaDefinitionYAMLs();
         // app.createRecipeYAMLs();
 
-        XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "allclasses.xml", Arrays.asList("Staging"));
+        XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "src/files/allclasses.xml", Arrays.asList("Staging"));
     }
 
     private void SetMapping() {
@@ -94,7 +98,7 @@ public class App {
 
             IRISObject newDataSource = (IRISObject) originalDataSource.invoke("%ConstructClone", 0);
 
-            this.dataSourceType = (String) newDataSource.invoke("%GetParameter", "DATASOURCENAME");
+            this.dataSourceType = ((String) newDataSource.invoke("%GetParameter", "DATASOURCENAME")).split(" ")[0];
             newDataSource.set("Name", "ISC" + this.dataSourceType + "PackageSource");
 
             Long sc = (Long) newDataSource.invoke("%Save");
@@ -167,7 +171,8 @@ public class App {
         try {
             IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
 
-            for (int i = 0; i < itemsArray.length(); i++) {
+            // for (int i = 0; i < itemsArray.length(); i++) {
+            for (int i = 0; i < 5; i++) {
                 JSONObject item = itemsArray.getJSONObject(i);
                 System.out.println("Item " + (i + 1) + ": " + item.toString());
 
@@ -258,6 +263,7 @@ public class App {
             // iris.classMethodObject("SDS.API.RecipeGroupAPI", "RecipeGroupCreate", recipeGroupCreateObj);
 
             for (String group : groups) {
+                System.out.println(group);
                 IRISObject recipeCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreate", "%New");
                 recipeCreateObj.set("name", group);
                 recipeCreateObj.set("shortName", group);
@@ -265,6 +271,8 @@ public class App {
 
                 IRISObject recipeCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreateResponse", "%New");
                 recipeCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "RecipeCreate", recipeCreateObj);
+
+                recipeGuids.put(group, (String) recipeCreateRespObj.get("recipeGUID"));
 
                 IRISObject stagingActivityCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityCreate", "%New");
                 stagingActivityCreateObj.set("name", "StagingActivity");
@@ -278,6 +286,14 @@ public class App {
                 stagingActivityUpdateObj.set("name", stagingActivityCreateRespObj.get("name"));
                 stagingActivityUpdateObj.set("saveVersion", 1);
 
+                IRISObject promotionActivityCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityCreate", "%New");
+                promotionActivityCreateObj.set("name", "PromotionActivity");
+                promotionActivityCreateObj.set("runOrder", 1);
+                promotionActivityCreateObj.set("promotionType", "Internal");
+
+                IRISObject promotionActivityCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityCreateResponse", "%New");
+                promotionActivityCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "PromotionActivityCreate", recipeCreateRespObj.get("id"), promotionActivityCreateObj);
+
                 List<String> groupTables = groupTableMapping.get(group);
                 IRISObject dataSchemas = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
                 for (int i = 0; i < groupTables.size(); i++) {
@@ -289,12 +305,22 @@ public class App {
 
                     List<String> fields = tableFields.get(table);
                     if (fields == null) {
-                        System.out.println("null fields for table: " + table);
+                        // System.out.println("null fields for table: " + table);
                         continue;
                     }
                     IRISObject dataSchemaFields = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
+                    List<String> fieldList = new ArrayList<>();
+                    List<String> modifiedFieldList = new ArrayList<>();
                     for (int j = 0; j < fields.size(); j++) {
                         String field = fields.get(j);
+
+                        fieldList.add(field);
+                        if (iris.classMethodBoolean("%SYSTEM.SQL", "IsReservedWord", field)) {
+                            modifiedFieldList.add("\"" + field + "\"");
+                        }
+                        else {
+                            modifiedFieldList.add(field);
+                        }
 
                         IRISObject stagingActivityItemUpdateItemObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityItemUpdateItem", "%New");
                         stagingActivityItemUpdateItemObj.set("name", field);
@@ -306,25 +332,96 @@ public class App {
                     stagingActivityUpdateItemObj.set("selected", true);
 
                     dataSchemas.invoke("Insert", stagingActivityUpdateItemObj);
+
+                    String modifiedRecipeName = iris.classMethodBoolean("%SYSTEM.SQL", "IsReservedWord", group) ? "\"" + group + "\"" : group;
+                    String modifiedTableName =iris.classMethodBoolean("%SYSTEM.SQL", "IsReservedWord", table) ? "\"" + table + "\"" : table;
+
+                    String updateSqlExpression = String.format(
+                    "UPDATE ISC_%s_%s.%s tt\n" +
+                    "SET UpdateTimestamp = CURRENT_TIMESTAMP, UpdateUser = USER\n" +
+                    "FROM {sa}.%s st WHERE st.%%BatchId={%%BatchId}",
+                    dataSourceType, modifiedRecipeName, modifiedTableName, modifiedTableName
+                    );
+
+                    Map<String, Object> promotionInsertItem = new HashMap<>();
+                    promotionInsertItem.put("createdBy", "");
+                    String fieldListString = String.join(", ", modifiedFieldList);
+                    String insertSqlExpression = String.format(
+                                                                "INSERT ISC_%s_%s.%s(%s)\n" +
+                                                                "SELECT %s\n" +
+                                                                "FROM {sa}.%s ta WHERE %%BatchId={%%BatchId}",
+                                                                dataSourceType, modifiedRecipeName, modifiedTableName, fieldListString, fieldListString, modifiedTableName
+                                                        );
+
+                    IRISObject updatePromotionActivityItemCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityItemCreate", "%New");
+                    updatePromotionActivityItemCreateObj.set("description", table + " Update");
+                    updatePromotionActivityItemCreateObj.set("sqlExpression", updateSqlExpression);
+                    updatePromotionActivityItemCreateObj.set("activitySaveVersion", (i + 2)*2);
+                    updatePromotionActivityItemCreateObj.set("runOrder", (i+1)*10);
+
+                    IRISObject updatePromotionActivityItemCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityItemCreateResponse", "%New");
+                    updatePromotionActivityItemCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "PromotionActivityItemCreate", promotionActivityCreateRespObj.get("id"), updatePromotionActivityItemCreateObj);
+
+                    IRISObject insertPromotionActivityItemCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityItemCreate", "%New");
+                    insertPromotionActivityItemCreateObj.set("description", table + " Insert");
+                    insertPromotionActivityItemCreateObj.set("sqlExpression", insertSqlExpression);
+                    insertPromotionActivityItemCreateObj.set("activitySaveVersion", (i + 3)*2);
+                    insertPromotionActivityItemCreateObj.set("runOrder", (i+1)*10 + 1);
+
+                    IRISObject insertPromotionActivityItemCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityItemCreateResponse", "%New");
+                    insertPromotionActivityItemCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "PromotionActivityItemCreate", promotionActivityCreateRespObj.get("id"), insertPromotionActivityItemCreateObj);
                 }
                 stagingActivityUpdateObj.set("dataSchemas", dataSchemas);
 
                 IRISObject stagingActivityUpdateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityUpdateResponse", "%New");
                 stagingActivityUpdateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivityUpdate", stagingActivityCreateRespObj.get("id"), stagingActivityUpdateObj);
 
-                System.out.println("id: " + stagingActivityUpdateRespObj.get("id"));
-
                 // IRISObject stagingActivity = (IRISObject) iris.classMethodObject("SDS.DataLoader.Staging.StagingActivity", "%OpenId", stagingActivityUpdateRespObj.get("id"));
                 // stagingActivity.set("Editing", false);
                 // Long sc = (Long) stagingActivity.invoke("%Save");
 
-                IRISObject stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivitySessionResponse", "%New");
-                stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivitySessionClose", stagingActivityUpdateRespObj.get("id"), true, false);
+                // IRISObject stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivitySessionResponse", "%New");
+                // stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivitySessionClose", stagingActivityUpdateRespObj.get("id"), true, false);
             }
         }
 
         catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    public void CreateScheduledTasks() {
+        System.out.println("CreateScheduledTasks()");
+
+        IRISObject scheduledTaskGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreate", "%New");
+        scheduledTaskGroupCreateObj.set("enabled", true);
+        scheduledTaskGroupCreateObj.set("taskDescription", "ISC" + dataSourceType + "PackageTaskGroup");
+        scheduledTaskGroupCreateObj.set("scheduledTaskType", "1");
+        scheduledTaskGroupCreateObj.set("schedulingType", "1");
+
+        IRISObject scheduledTaskGroupCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreateResponse", "%New");
+        scheduledTaskGroupCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.BusinessSchedulerAPI", "ScheduledTaskCreate", scheduledTaskGroupCreateObj);
+
+        for (String group : groups) {
+            IRISObject scheduledTaskCreateObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreate", "%New");
+            scheduledTaskCreateObj.set("enabled", true);
+            scheduledTaskCreateObj.set("entityId", 1);
+            scheduledTaskCreateObj.set("exceptionWorkflowRole", "System Administrator");
+            scheduledTaskCreateObj.set("dependencyInactivityTimeout", 300);
+            scheduledTaskCreateObj.set("taskDescription", group);
+            scheduledTaskCreateObj.set("scheduledTaskType", "0");
+            scheduledTaskCreateObj.set("schedulingType", "1");
+            scheduledTaskCreateObj.set("schedulingGroup", scheduledTaskGroupCreateRespObj.get("id"));
+            scheduledTaskCreateObj.set("errorEmailDistributionListId", 0);
+            scheduledTaskCreateObj.set("successEmailDistributionListId", 0);
+            scheduledTaskCreateObj.set("errorEmailTemplateId", 1);
+            scheduledTaskCreateObj.set("successEmailTemplateId", 2);
+            scheduledTaskCreateObj.set("taskDefinitionClassName", "SDS.DataLoader.RunRecipeTaskDefinition");
+            scheduledTaskCreateObj.set("scheduledResourceGUID", recipeGuids.get(group));
+            // scheduledTaskCreateObj.set("scheduledResourceGUID", "F33A2926-A122-11EF-9702-0242AC140003");
+
+            IRISObject scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreateResponse", "%New");
+            scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.BusinessSchedulerAPI", "ScheduledTaskCreate", scheduledTaskCreateObj);
         }
     }
 
@@ -345,7 +442,14 @@ public class App {
 
         // Spec map
         Map<String, Object> spec = new HashMap<>();
+        int tableNum = 1;
+        int limit = 10;
+        int count = 0;
         for (String table : tables) {
+            count++;
+            if (count >= limit) {
+                break;
+            }
             spec.put("name", "ISC" + this.dataSourceType + "Package" + "-" + table);
             spec.put("dataSourceItemName", table);
             spec.put("extractionStrategy", "Simple Load");
@@ -359,21 +463,24 @@ public class App {
 
             List<Map<String, Object>> fields = new ArrayList<>();
 
-            IRISObject businessOperation = (IRISObject) iris.classMethodObject("SDS.DataLoader.BO."+dataSourceType+".Operation", "%New");
+            IRISObject businessOperation = (IRISObject) iris.classMethodObject("SDS.DataLoader.BO.SalesForce.Operation", "%New", "EmailNotificationTLSConfig");
             IRISObject memberDefResponseObj = (IRISObject) iris.classMethodObject("SDS.DataLoader.BO.DataSource.V1.Response.MemberDefResponse", "%New");
 
             IRISObject dataSource = (IRISObject) iris.classMethodObject("SDS.DataLoader.DS.DataSource", "%OpenId", dataSourceId);
+            businessOperation.set("SSLConfig", "EmailNotificationTLSConfig");
             memberDefResponseObj = (IRISObject) businessOperation.invoke("GenerateMemberDefFromObject", dataSource, table);
 
-            IRISObject columns = (IRISObject) memberDefResponseObj.get("Columns");
-            for (int i = 1; i < (int) iris.classMethodObject("%Library.ListOfObjects", "Count", columns); i++) {
+            IRISObject columns = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
+            columns = (IRISObject) memberDefResponseObj.get("Columns");
+
+            for (int i = 1; i < ((Long) columns.invoke("Count")).intValue(); i++) {
                 IRISObject column = (IRISObject) columns.invoke("GetAt", i);
 
                 Map<String, Object> field = new HashMap<>();
                 field.put("fieldName", column.get("FieldName"));
                 field.put("fieldType", column.get("FieldType"));
-                field.put("minVal", column.get("MinVal"));
-                field.put("maxVal", column.get("MaxVal"));
+                field.put("minVal", column.get("Minval"));
+                field.put("maxVal", column.get("Maxval"));
                 field.put("scale", column.get("Scale"));
                 field.put("required", column.get("Required"));
                 field.put("length", column.get("Length"));
@@ -391,6 +498,12 @@ public class App {
 
             try (FileWriter writer = new FileWriter("schemadefs/"+table+".TotalViewDataSchemaDefinition")) {
                 yaml.dump(data, writer);
+                System.out.println("Created file #" + tableNum + " schemadefs/"+table+".TotalViewDataSchemaDefinition");
+                tableNum ++;
+            }
+
+            catch (IOException e) {
+                e.printStackTrace();
             }
         }
     }
@@ -455,7 +568,7 @@ public class App {
 
                 List<String> fields = tableFields.get(table);
                 if (fields == null) {
-                    System.out.println("null fields for table: " + table);
+                    // System.out.println("null fields for table: " + table);
                     continue;
                 }
 
@@ -487,7 +600,7 @@ public class App {
                     dataSourceType, modifiedRecipeName, modifiedTableName, modifiedTableName
                 );
                 promotionUpdateItem.put("sqlExpression", updateSqlExpression);
-                promotionUpdateItem.put("description", "");
+                promotionUpdateItem.put("description", table + " Update");
                 promotionUpdateItem.put("runOrder", (i+1)*10);
 
                 Map<String, Object> promotionInsertItem = new HashMap<>();
@@ -500,7 +613,7 @@ public class App {
                                                             dataSourceType, modifiedRecipeName, modifiedTableName, fieldListString, fieldListString, modifiedTableName
                                                     );
                 promotionInsertItem.put("sqlExpression", insertSqlExpression);
-                promotionInsertItem.put("description", "");
+                promotionInsertItem.put("description", table + " Insert");
                 promotionInsertItem.put("runOrder", (i+1)*10 + 1);
 
                 promotionItems.add(promotionUpdateItem);
@@ -519,6 +632,10 @@ public class App {
 
             try (FileWriter writer = new FileWriter("recipes/"+group+".TotalViewRecipe")) {
                 yaml.dump(data, writer);
+            }
+
+            catch (IOException e) {
+                e.printStackTrace();
             }
         }
     }
