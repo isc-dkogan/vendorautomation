@@ -46,18 +46,20 @@ public class App {
 
         app.SetMapping();
 
-        app.ConnectToIRIS();
+        app.connectToIRIS();
 
-        int newDataSourceId = app.DuplicateDataSource(Integer.parseInt(args[0]));
+        int newDataSourceId = app.duplicateDataSource(Integer.parseInt(args[0]));
         app.SetDataSourceId(newDataSourceId);
 
-        JSONArray dataSourceItems = app.GetDataSourceItems();
-        app.ImportDataSchemaDefinitions(dataSourceItems);
-        app.PublishDataSchemaDefinitions();
-        app.SetDataSchemaDefinitionInformation();
-        app.CreateRecipes();
-        app.waitForSchedulableResourceTablePopulation();
-        app.CreateScheduledTasks();
+        JSONArray dataSourceItems = app.getDataSourceItems();
+        app.importDataSchemaDefinitions(dataSourceItems);
+        app.publishDataSchemaDefinitions();
+        app.setDataSchemaDefinitionInformation();
+        app.createRecipes();
+        boolean tablePopulated = app.waitForSchedulableResourceTablePopulation();
+        if (tablePopulated) {
+            app.createScheduledTasks();
+        }
 
         // XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "src/files/allclasses.xml", Arrays.asList("Staging"));
 
@@ -74,8 +76,8 @@ public class App {
         groupTableMapping = excelReader.getGroupTableMap();
     }
 
-    private void ConnectToIRIS() throws Exception {
-        System.out.println("ConnectToIRIS()");
+    private void connectToIRIS() throws Exception {
+        System.out.println("connectToIRIS()");
 
         IrisDatabaseConnection conn = new IrisDatabaseConnection();
         IRISDataSource dataSource = conn.createDataSource();
@@ -89,8 +91,8 @@ public class App {
         this.dataSourceId = dataSourceId;
     }
 
-    public int DuplicateDataSource(int dataSourceId) {
-        System.out.println("DuplicateDataSource()");
+    public int duplicateDataSource(int dataSourceId) {
+        System.out.println("duplicateDataSource()");
 
         int newDataSourceId = 0;
         try {
@@ -115,8 +117,8 @@ public class App {
         return newDataSourceId;
     }
 
-    public JSONArray GetDataSourceItems() {
-        System.out.println("GetDataSourceItems()");
+    public JSONArray getDataSourceItems() {
+        System.out.println("getDataSourceItems()");
 
         JSONArray itemsArray = null;
         try {
@@ -165,8 +167,8 @@ public class App {
         return itemsArray;
     }
 
-    public void ImportDataSchemaDefinitions(JSONArray itemsArray) {
-        System.out.println("ImportDataSchemaDefinitions()");
+    public void importDataSchemaDefinitions(JSONArray itemsArray) {
+        System.out.println("importDataSchemaDefinitions()");
 
         try {
             IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
@@ -193,8 +195,8 @@ public class App {
         }
     }
 
-    public void SetDataSchemaDefinitionInformation() {
-        System.out.println("SetDataSchemaDefinitionInformation()");
+    public void setDataSchemaDefinitionInformation() {
+        System.out.println("setDataSchemaDefinitionInformation()");
 
         try {
             String query = "SELECT dsd.ID, dsd.AssignedGUID, dsd.DataSourceItemName, dsf.FieldName \n" +
@@ -226,8 +228,8 @@ public class App {
         }
     }
 
-    public void PublishDataSchemaDefinitions() {
-        System.out.println("PublishDataSchemaDefinitions()");
+    public void publishDataSchemaDefinitions() {
+        System.out.println("publishDataSchemaDefinitions()");
 
         int count = 0;
         try {
@@ -254,8 +256,8 @@ public class App {
         }
     }
 
-    public void CreateRecipes() {
-        System.out.println("CreateRecipes()");
+    public void createRecipes() {
+        System.out.println("createRecipes()");
 
         try {
             // IRISObject recipeGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipeGroup.v1.recipeGroupCreate", "%New");
@@ -430,8 +432,8 @@ public class App {
         return tableUpdated;
     }
 
-    public void CreateScheduledTasks() {
-        System.out.println("CreateScheduledTasks()");
+    public void createScheduledTasks() {
+        System.out.println("createScheduledTasks()");
 
         IRISObject scheduledTaskGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreate", "%New");
         scheduledTaskGroupCreateObj.set("enabled", true);
