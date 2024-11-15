@@ -548,9 +548,9 @@ public class App {
 
             data.put("spec", spec);
 
-            try (FileWriter writer = new FileWriter("schemadefs/"+table+".TotalViewDataSchemaDefinition")) {
+            try (FileWriter writer = new FileWriter(String.format("schemadefs/%s.TotalViewDataSchemaDefinition", table))) {
                 yaml.dump(data, writer);
-                log.info("Created file #" + tableNum + " schemadefs/"+table+".TotalViewDataSchemaDefinition");
+                log.info(String.format("Created file #%d schemadefs/%s.TotalViewDataSchemaDefinition", tableNum, table));
                 tableNum ++;
             }
 
@@ -583,11 +583,11 @@ public class App {
             spec.put("recordStepModeActive", "");
             spec.put("maxRows", "0");
             spec.put("recipeActiveStatus", "Active");
-            spec.put("groupName", "ISC" + this.dataSourceType + "Package");
+            spec.put("groupName", String.format("ISC%sPackage", dataSourceType));
 
             List<Map<String, Object>> stagingActivities = new ArrayList<>();
             Map<String, Object> stagingActivity = new HashMap<>();
-            stagingActivity.put("dataSourceName", "ISC" + this.dataSourceType + "PackageSource");
+            stagingActivity.put("dataSourceName", String.format("ISC%sPackageSource", dataSourceType));
             stagingActivity.put("createUser", "");
             stagingActivity.put("disableUser", "");
             stagingActivity.put("name", "StagingActivity");
@@ -652,7 +652,7 @@ public class App {
                     dataSourceType, modifiedRecipeName, modifiedTableName, modifiedTableName
                 );
                 promotionUpdateItem.put("sqlExpression", updateSqlExpression);
-                promotionUpdateItem.put("description", table + " Update");
+                promotionUpdateItem.put("description", String.format("%s Update", table));
                 promotionUpdateItem.put("runOrder", (i+1)*10);
 
                 Map<String, Object> promotionInsertItem = new HashMap<>();
@@ -665,7 +665,7 @@ public class App {
                                                             dataSourceType, modifiedRecipeName, modifiedTableName, fieldListString, fieldListString, modifiedTableName
                                                     );
                 promotionInsertItem.put("sqlExpression", insertSqlExpression);
-                promotionInsertItem.put("description", table + " Insert");
+                promotionInsertItem.put("description", String.format("%s Insert", table));
                 promotionInsertItem.put("runOrder", (i+1)*10 + 1);
 
                 promotionItems.add(promotionUpdateItem);
@@ -682,7 +682,7 @@ public class App {
 
             data.put("spec", spec);
 
-            try (FileWriter writer = new FileWriter("recipes/"+group+".TotalViewRecipe")) {
+            try (FileWriter writer = new FileWriter(String.format("recipes/%s.TotalViewRecipe", group))) {
                 yaml.dump(data, writer);
             }
 
@@ -721,14 +721,14 @@ public class App {
             spec.put("schedulableResource", schedulableResource);
             spec.put("entity", "");
             spec.put("exceptionWorkflowRole", "");
-            spec.put("businessEventTag", "ISC" + dataSourceType + "PackageTaskGroup");
+            spec.put("businessEventTag", String.format("ISC%sPackageTaskGroup", dataSourceType));
             spec.put("dependencyInactivityTimeout", "");
             spec.put("schedulingGroup", "");
             Map<String, Object> schedulingProperties = new HashMap<>();
             schedulingProperties.put("dependencyInactivityTimeout", 300);
             spec.put("schedulingProperties", schedulingProperties);
 
-            try (FileWriter writer = new FileWriter("scheduledtasks/"+group+".TotalViewScheduledTask")) {
+            try (FileWriter writer = new FileWriter(String.format("scheduledtasks/%s.TotalViewScheduledTask", group))) {
                 yaml.dump(data, writer);
             }
         }
