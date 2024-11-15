@@ -73,6 +73,7 @@ public class App {
         if (tablePopulated) {
             createScheduledTasks();
         }
+        // exportBundle();
 
         // XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "src/files/allclasses.xml", Arrays.asList("Staging"));
 
@@ -120,7 +121,7 @@ public class App {
         IRISObject newDataSource = (IRISObject) originalDataSource.invoke("%ConstructClone", 0);
 
         this.dataSourceType = ((String) newDataSource.invoke("%GetParameter", "DATASOURCENAME")).split(" ")[0];
-        newDataSource.set("Name", "ISC" + this.dataSourceType + "PackageSource");
+        newDataSource.set("Name", String.format("ISC%sPackageSource", dataSourceType));
 
         Long sc = (Long) newDataSource.invoke("%Save");
 
@@ -139,7 +140,7 @@ public class App {
         JSONArray itemsArray = null;
 
         URL url = new URL("http://localhost:8081/intersystems/data-loader/v1/dataSources/"+dataSourceId+"/schemas/members");
-        log.info("Sending GET request to %s", url);
+        log.info(String.format("Sending GET request to %s", url));
 
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
@@ -175,7 +176,7 @@ public class App {
 
         connection.disconnect();
 
-        log.info(itemsArray.length() + " items found");
+        log.info(String.format("%d items found", itemsArray.length()));
 
         return itemsArray;
     }
@@ -185,8 +186,8 @@ public class App {
 
         IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
 
-        for (int i = 0; i < itemsArray.length(); i++) {
-        // for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 5; i++) {
+        // for (int i = 0; i < itemsArray.length(); i++) {
             JSONObject item = itemsArray.getJSONObject(i);
 
             IRISObject importRequest = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BO.ImportRequest", "%New");
@@ -260,7 +261,7 @@ public class App {
         // int groupId = (int) iris.classMethodDouble("SDS.API.RecipeGroupAPI", "RecipeGroupCreate", recipeGroupCreateObj);
 
         for (String group : groups) {
-            log.info("Creating " + group + " recipe");
+            log.info(String.format("Creating %s recipe", group));
             IRISObject recipeCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreate", "%New");
             recipeCreateObj.set("name", group);
             recipeCreateObj.set("shortName", group);
@@ -351,7 +352,7 @@ public class App {
                                                     );
 
                 IRISObject updatePromotionActivityItemCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityItemCreate", "%New");
-                updatePromotionActivityItemCreateObj.set("description", table + " Update");
+                updatePromotionActivityItemCreateObj.set("description", String.format("%s Update", table));
                 updatePromotionActivityItemCreateObj.set("sqlExpression", updateSqlExpression);
                 updatePromotionActivityItemCreateObj.set("activitySaveVersion", (i + 2)*2);
                 updatePromotionActivityItemCreateObj.set("runOrder", (i+1)*10);
@@ -360,7 +361,7 @@ public class App {
                 updatePromotionActivityItemCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "PromotionActivityItemCreate", promotionActivityCreateRespObj.get("id"), updatePromotionActivityItemCreateObj);
 
                 IRISObject insertPromotionActivityItemCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityItemCreate", "%New");
-                insertPromotionActivityItemCreateObj.set("description", table + " Insert");
+                insertPromotionActivityItemCreateObj.set("description", String.format("%s Insert", table));
                 insertPromotionActivityItemCreateObj.set("sqlExpression", insertSqlExpression);
                 insertPromotionActivityItemCreateObj.set("activitySaveVersion", (i + 3)*2);
                 insertPromotionActivityItemCreateObj.set("runOrder", (i+1)*10 + 1);
@@ -403,7 +404,7 @@ public class App {
                 guids.add(guid);
             }
 
-            tableUpdated = guids.containsAll(tableGuids.values());
+            tableUpdated = guids.containsAll(recipeGuids.values());
             Thread.sleep(500);
         }
 
@@ -421,7 +422,7 @@ public class App {
 
         IRISObject scheduledTaskGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreate", "%New");
         scheduledTaskGroupCreateObj.set("enabled", true);
-        scheduledTaskGroupCreateObj.set("taskDescription", "ISC" + dataSourceType + "PackageTaskGroup");
+        scheduledTaskGroupCreateObj.set("taskDescription", String.format("ISC%sPackageTaskGroup", dataSourceType));
         scheduledTaskGroupCreateObj.set("scheduledTaskType", "1");
         scheduledTaskGroupCreateObj.set("schedulingType", "1");
 
@@ -450,6 +451,32 @@ public class App {
         }
     }
 
+    public void exportBundle() {
+        log.info("exportBundle()");
+
+        IRISObject configExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
+        IRISObject items = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
+
+        tableGuids.forEach((table, guid) -> {
+            IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
+            configExportListItem.set("fileName", String.format("ISC%sPackageSource-%s.TotalViewDataSchemaDefinition", dataSourceType, table));
+            configExportListItem.set("guid", guid);
+            items.invoke("Insert", configExportListItem);
+        });
+
+        recipeGuids.forEach((recipe, guid) -> {
+            IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
+            configExportListItem.set("fileName", String.format("%s.TotalViewRecipe", recipe));
+            configExportListItem.set("guid", guid);
+            items.invoke("Insert", configExportListItem);
+        });
+
+        configExportList.set("items", items);
+
+        IRISObject exportBundle = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.Bundle", "%New");
+        exportBundle = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigExport", configExportList);
+    }
+
     public void createDataSchemaDefinitionYAMLs() throws IOException {
         DumperOptions options = new DumperOptions();
         options.setDefaultFlowStyle(FlowStyle.BLOCK);
@@ -475,7 +502,7 @@ public class App {
             if (count >= limit) {
                 break;
             }
-            spec.put("name", "ISC" + this.dataSourceType + "Package" + "-" + table);
+            spec.put("name", String.format("ISC%sPackage-%s", dataSourceType, table));
             spec.put("dataSourceItemName", table);
             spec.put("extractionStrategy", "Simple Load");
             spec.put("extractionStrategyField", "");
@@ -484,7 +511,7 @@ public class App {
             List<String> primaryKeyFieldList = new ArrayList<>();
             spec.put("primaryKeyFieldList", primaryKeyFieldList);
             spec.put("entityName", table);
-            spec.put("dataSource", "ISC" + this.dataSourceType + "Package");
+            spec.put("dataSource", String.format("ISC%sPackage", dataSourceType));
 
             List<Map<String, Object>> fields = new ArrayList<>();
 
