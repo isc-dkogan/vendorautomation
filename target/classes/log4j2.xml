@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="FATAL">
+    <Properties>
+        <Property name="log-path">logs</Property>
+        <Property name="log-file-name">vendorautomation</Property>
+    </Properties>
+    <Appenders>
+        <RollingFile name="File" fileName="${log-path}/${log-file-name}_${date:yyyyMMdd}.log"
+                     filePattern="${log-path}/${log-file-name}_${date:yyyyMMdd'_'HHmmss}.log" >
+            <PatternLayout>
+                <Pattern>%d{yyyy-MM-dd HH:mm:ss,SSS} %p (%t) %C{1}.%M[%L]: %m%n</Pattern>
+            </PatternLayout>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="500MB" />
+            </Policies>
+        </RollingFile>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout>
+                <Pattern>%d{HH:mm:ss,SSS} %p (%t) %C{1}.%M[%L]: %m%n</Pattern>
+            </PatternLayout>
+        </Console>
+    </Appenders>
+    <Loggers>
+        <Root level="TRACE" additivity="false">
+            <AppenderRef ref="File"/>
+            <AppenderRef ref="Console"/>
+        </Root>
+    </Loggers>
+</Configuration>
