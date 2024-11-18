@@ -35,6 +35,8 @@ public class App {
     private Map<String, String> tableGuids = new HashMap<>();
     private Map<String, List<String>> tableFields = new HashMap<>();
     private Map<String, String> recipeGuids = new HashMap<>();
+    private List<Integer> recipeIds = new ArrayList<>();
+    private List<Integer> scheduledTaskIds = new ArrayList<>();
 
     private IRISConnection connection;
     private IRIS iris;
@@ -49,14 +51,24 @@ public class App {
         App app = new App();
 
         try {
-            app.run(args[0]);
+            boolean buildTargetTables;
+
+            if ("1".equals(args[1])) {
+                buildTargetTables = true;
+            } else if ("0".equals(args[1])) {
+                buildTargetTables = false;
+            } else {
+                throw new IllegalArgumentException(String.format("Invalid argument: %s. Please pass 0 (false) or 1 (true).", args[1]));
+            }
+
+            app.run(args[0], buildTargetTables);
         }
         catch (Exception e) {
             log.error("Run failed, ", e);
         }
     }
 
-    private void run(String dataSourceId) throws Exception {
+    private void run(String dataSourceId, boolean buildTargetTables) throws Exception {
         setMapping();
 
         connectToIRIS();
@@ -73,12 +85,31 @@ public class App {
         if (tablePopulated) {
             createScheduledTasks();
         }
+
+        if (buildTargetTables) {
+            XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "src/files/allclasses.xml");
+            xmlProcessor.process(Arrays.asList("Staging"));
+        }
+
         // exportBundle();
 
-        // XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "src/files/allclasses.xml", Arrays.asList("Staging"));
+        Scanner scanner = new Scanner(System.in);
 
-        // createDataSchemaDefinitionYAMLs();
-        // createRecipeYAMLs();
+        while (true) {
+            System.out.print("Would you like to clean up the artifacts you've created? (yes/no): ");
+            String input = scanner.nextLine().trim().toLowerCase();
+
+            if (input.equals("yes")) {
+                cleanup(tablePopulated);
+                break;
+            } else if (input.equals("no")) {
+                break;
+            } else {
+                System.out.println("Invalid input. Please type 'yes' or 'no'.");
+            }
+        }
+
+        scanner.close();
     }
 
     private void setMapping() {
@@ -105,7 +136,7 @@ public class App {
         this.dataSourceId = dataSourceId;
     }
 
-    public int duplicateDataSource(int dataSourceId) {
+    private int duplicateDataSource(int dataSourceId) {
         log.info("duplicateDataSource()");
 
         int newDataSourceId;
@@ -181,7 +212,7 @@ public class App {
         return itemsArray;
     }
 
-    public void importDataSchemaDefinitions(JSONArray itemsArray) {
+    private void importDataSchemaDefinitions(JSONArray itemsArray) {
         log.info("importDataSchemaDefinitions()");
 
         IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
@@ -202,7 +233,7 @@ public class App {
         }
     }
 
-    public void setDataSchemaDefinitionInformation() throws SQLException {
+    private void setDataSchemaDefinitionInformation() throws SQLException {
         log.info("setDataSchemaDefinitionInformation()");
 
         String query = "SELECT dsd.ID, dsd.AssignedGUID, dsd.DataSourceItemName, dsf.FieldName \n" +
@@ -230,7 +261,7 @@ public class App {
         stmt.close();
     }
 
-    public void publishDataSchemaDefinitions() throws SQLException {
+    private void publishDataSchemaDefinitions() throws SQLException {
         log.info("publishDataSchemaDefinitions()");
 
         int count = 0;
@@ -253,7 +284,7 @@ public class App {
         stmt.close();
     }
 
-    public void createRecipes() {
+    private void createRecipes() {
         log.info("createRecipes()");
 
         // IRISObject recipeGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipeGroup.v1.recipeGroupCreate", "%New");
@@ -271,6 +302,7 @@ public class App {
             recipeCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "RecipeCreate", recipeCreateObj);
 
             recipeGuids.put(group, (String) recipeCreateRespObj.get("recipeGUID"));
+            recipeIds.add((Integer) recipeCreateRespObj.get("id"));
 
             IRISObject stagingActivityCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityCreate", "%New");
             stagingActivityCreateObj.set("name", "StagingActivity");
@@ -417,7 +449,7 @@ public class App {
         return tableUpdated;
     }
 
-    public void createScheduledTasks() {
+    private void createScheduledTasks() {
         log.info("createScheduledTasks()");
 
         IRISObject scheduledTaskGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreate", "%New");
@@ -448,10 +480,12 @@ public class App {
 
             IRISObject scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreateResponse", "%New");
             scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.BusinessSchedulerAPI", "ScheduledTaskCreate", scheduledTaskCreateObj);
+
+            scheduledTaskIds.add((Integer) scheduledTaskCreateObj.get("id"));
         }
     }
 
-    public void exportBundle() {
+    private void exportBundle() {
         log.info("exportBundle()");
 
         IRISObject configExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
@@ -477,7 +511,38 @@ public class App {
         exportBundle = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigExport", configExportList);
     }
 
-    public void createDataSchemaDefinitionYAMLs() throws IOException {
+    private void cleanup(boolean tablePopulated) {
+        if (tablePopulated) {
+            deleteScheduledTasks();
+        }
+        deleteRecipes();
+        deleteDataSchemaDefinitions();
+        deleteDataSource();
+    }
+
+    private void deleteScheduledTasks(){
+        for (Integer id : scheduledTaskIds) {
+            iris.classMethodObject("SDS.API.BusinessSchedulerAPI", "ScheduledTaskDelete", id);
+        }
+    }
+
+    private void deleteRecipes(){
+        for (Integer id : recipeIds) {
+            iris.classMethodObject("SDS.API.RecipesAPI", "PermanentlyDeleteRecipe", id);
+        }
+    }
+
+    private void deleteDataSchemaDefinitions(){
+        for (String id : tableIds.values()) {
+            iris.classMethodObject("SDS.API.DataCatalogAPI", "SchemaDefinitionDelete", Integer.valueOf(id));
+        }
+    }
+
+    private void deleteDataSource(){
+        iris.classMethodObject("SDS.API.DataSourceAPI", "DataSourceDelete", dataSourceId);
+    }
+
+    private void createDataSchemaDefinitionYAMLs() throws IOException {
         DumperOptions options = new DumperOptions();
         options.setDefaultFlowStyle(FlowStyle.BLOCK);
 
@@ -560,7 +625,7 @@ public class App {
         }
     }
 
-    public void createRecipeYAMLs() throws IOException {
+    private void createRecipeYAMLs() throws IOException {
         DumperOptions options = new DumperOptions();
         options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
 
@@ -692,7 +757,7 @@ public class App {
         }
     }
 
-    public void createScheduledTaskYAMLs() throws IOException {
+    private void createScheduledTaskYAMLs() throws IOException {
         DumperOptions options = new DumperOptions();
         options.setDefaultFlowStyle(FlowStyle.BLOCK);
 
@@ -732,6 +797,5 @@ public class App {
                 yaml.dump(data, writer);
             }
         }
-
     }
 }
