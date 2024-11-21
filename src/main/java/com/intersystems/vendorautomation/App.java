@@ -33,6 +33,7 @@ public class App {
     private List<String> recipeIds = new ArrayList<>();
     private String scheduledTaskGroupId;
 
+    private String mappingSourcePath = "src/files/mapping.xlsx";
     private String xmlSourcePath = "src/files/allclasses.xml";
 
     private IRISConnection connection;
@@ -121,7 +122,7 @@ public class App {
     private void setMapping() {
         log.info("setMapping()");
 
-        ExcelReader excelReader = new ExcelReader("src/files/mapping.xlsx");
+        ExcelReader excelReader = new ExcelReader(mappingSourcePath);
         groups = excelReader.getUniqueGroupNames();
         tables = excelReader.getAllTableNames();
         groupTableMapping = excelReader.getGroupTableMap();
@@ -187,6 +188,10 @@ public class App {
                     dataSourceId, encodedParamValue);
         }
         else {
+            if (schema != "") {
+                throw new Exception(String.format("A schema %s was specified but the data source has no schemas.", schema));
+            }
+
             urlString = String.format("http://localhost:8081/intersystems/data-loader/v1/dataSources/%s/schemas/members", dataSourceId);
         }
 
