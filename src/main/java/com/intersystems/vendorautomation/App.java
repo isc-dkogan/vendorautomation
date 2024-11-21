@@ -9,6 +9,7 @@ import com.intersystems.jdbc.IRISObject;
 
 import java.io.*;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -32,11 +33,14 @@ public class App {
     private List<String> recipeIds = new ArrayList<>();
     private String scheduledTaskGroupId;
 
+    private String xmlSourcePath = "src/files/allclasses.xml";
+
     private IRISConnection connection;
     private IRIS iris;
 
     private int dataSourceId;
     private String dataSourceType;
+    private String schema;
 
     private static final Logger log = LogManager.getLogger(App.class);
     public static void main(String[] args) throws Exception {
@@ -44,22 +48,23 @@ public class App {
 
         App app = new App();
 
-        if (args.length < 2) {
-            throw new Exception("Error: Missing arguments. 2 arguments required");
+        if (args.length < 1) {
+            throw new Exception("Error: Missing arguments. At least 1 argument required");
+        }
+
+        if (args.length > 2) {
+            throw new Exception("Error: Too many arguments. Please enter at most 2 arguments");
         }
 
         try {
-            boolean buildTargetTables;
+            String schema = "";
 
-            if ("1".equals(args[1])) {
-                buildTargetTables = true;
-            } else if ("0".equals(args[1])) {
-                buildTargetTables = false;
-            } else {
-                throw new IllegalArgumentException(String.format("Invalid argument: %s. Please pass 0 (false) or 1 (true).", args[1]));
+            if (args.length == 2) {
+                schema = args[1];
             }
 
-            app.run(args[0], buildTargetTables);
+
+            app.run(args[0], schema);
         }
         catch (Exception e) {
             // app.cleanup();
@@ -67,13 +72,13 @@ public class App {
         }
     }
 
-    private void run(String dataSourceId, boolean buildTargetTables) throws Exception {
+    private void run(String dataSourceId, String schema) throws Exception {
         setMapping();
 
         connectToIRIS();
 
-        int newDataSourceId = duplicateDataSource(Integer.parseInt(dataSourceId));
-        setDataSourceId(newDataSourceId);
+        this.dataSourceId = duplicateDataSource(Integer.parseInt(dataSourceId));
+        this.schema = schema;
 
         JSONArray dataSourceItems = getDataSourceItems();
         importDataSchemaDefinitions(dataSourceItems);
@@ -85,8 +90,10 @@ public class App {
             createScheduledTasks();
         }
 
-        if (buildTargetTables) {
-            XMLProcessor xmlProcessor = new XMLProcessor("Salesforce", "src/files/allclasses.xml");
+        File file = new File(xmlSourcePath);
+
+        if (file.exists()) {
+            XMLProcessor xmlProcessor = new XMLProcessor(dataSourceType, xmlSourcePath);
             xmlProcessor.process(Arrays.asList("Staging"));
         }
 
@@ -129,17 +136,11 @@ public class App {
         iris = IRIS.createIRIS(connection);
     }
 
-    private void setDataSourceId(int dataSourceId) {
-        log.info("setDataSourceId()");
-
-        this.dataSourceId = dataSourceId;
-    }
-
     private int duplicateDataSource(int dataSourceId) {
         log.info("duplicateDataSource()");
 
         int newDataSourceId;
-        IRISObject originalDataSource ;
+        IRISObject originalDataSource;
 
         try {
             originalDataSource = (IRISObject) iris.classMethodObject("SDS.DataLoader.DS.DataSource", "%OpenId", dataSourceId);
@@ -169,7 +170,27 @@ public class App {
 
         JSONArray itemsArray = null;
 
-        URL url = new URL("http://localhost:8081/intersystems/data-loader/v1/dataSources/"+dataSourceId+"/schemas/members");
+        boolean supportsSchema;
+        IRISObject dataSource = (IRISObject) iris.classMethodObject("SDS.DataLoader.DS.DataSource", "%OpenId", dataSourceId);
+        Long capabilitiesCode = (Long) dataSource.invoke("%GetParameter", "DATASOURCECAPABILITIESCODE");
+        Long supportsSchemaVal = (Long) dataSource.invoke("%GetParameter", "SUPPORTSSCHEMA");
+        supportsSchema = (capabilitiesCode.intValue() & supportsSchemaVal.intValue()) != 0;
+
+        String urlString;
+        if (supportsSchema) {
+            if (schema == "") {
+                throw new Exception("Data source requires schema, but no schema specified.");
+            }
+
+            String encodedParamValue = URLEncoder.encode(schema, "UTF-8");
+            urlString = String.format("http://localhost:8081/intersystems/data-loader/v1/dataSources/%s/schemas/members?schema=%s",
+                    dataSourceId, encodedParamValue);
+        }
+        else {
+            urlString = String.format("http://localhost:8081/intersystems/data-loader/v1/dataSources/%s/schemas/members", dataSourceId);
+        }
+
+        URL url = new URL(urlString);
         log.info(String.format("Sending GET request to %s", url));
 
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
@@ -195,6 +216,7 @@ public class App {
             String jsonResponse = content.toString();
             JSONObject jsonObject = new JSONObject(jsonResponse);
 
+            log.info(String.format("response: %s", jsonObject.toString()));
             if (jsonObject.has("items")) {
                 itemsArray = jsonObject.getJSONArray("items");
             } else {
@@ -216,15 +238,14 @@ public class App {
 
         IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
 
-        for (int i = 0; i < 5; i++) {
-        // for (int i = 0; i < itemsArray.length(); i++) {
+        for (int i = 0; i < itemsArray.length(); i++) {
             JSONObject item = itemsArray.getJSONObject(i);
 
             IRISObject importRequest = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BO.ImportRequest", "%New");
             importRequest.set("BatchId", 1);
             importRequest.set("DataSourceId", dataSourceId);
             importRequest.set("MemberName", item.getString("memberName"));
-            // importRequest.set("SchemaName", item.getString("schemaName"));
+            importRequest.set("SchemaName", schema);
             importRequest.set("SendAsync", false);
 
             Long sc = (Long) dataCatalogService.invoke("ProcessInput", importRequest);
@@ -287,7 +308,7 @@ public class App {
         log.info("createRecipes()");
 
         IRISObject recipeGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipeGroup.v1.recipeGroupCreate", "%New");
-        recipeGroupCreateObj.set("groupName", "ISCSalesforcePackageRecipes");
+        recipeGroupCreateObj.set("groupName", String.format("ISC%sPackageRecipes", dataSourceType));
         String groupId = (String) iris.classMethodObject("SDS.API.RecipeGroupAPI", "RecipeGroupCreate", recipeGroupCreateObj);
 
         for (String group : groups) {
@@ -330,9 +351,9 @@ public class App {
 
                 IRISObject stagingActivityUpdateItemObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityUpdateItem", "%New");
 
-                stagingActivityUpdateItemObj.set("id", tableIds.get(table));
+                stagingActivityUpdateItemObj.set("id", tableIds.get(String.format("%s%s", schema, table)));
 
-                List<String> fields = tableFields.get(table);
+                List<String> fields = tableFields.get(String.format("%s%s", schema, table));
                 if (fields == null) {
                     log.warn("null fields for table: " + table);
                     continue;
