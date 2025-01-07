@@ -3,3 +3,5 @@ recipes/**
 schemadefs/**
 scheduledtasks/**
 src/files/**
+src/main/resources/artifacts/**
+src/main/resources/application.conf

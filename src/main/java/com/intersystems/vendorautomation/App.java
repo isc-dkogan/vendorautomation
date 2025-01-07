@@ -13,15 +13,29 @@ import java.net.URLEncoder;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
+import com.typesafe.config.ConfigParseOptions;
+import com.typesafe.config.ConfigResolveOptions;
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
 
 public class App {
+
+    private Config config;
 
     private Set<String> groups;
     private Set<String> tables;
@@ -33,9 +47,6 @@ public class App {
     private List<String> recipeIds = new ArrayList<>();
     private String scheduledTaskGroupId;
 
-    private String mappingSourcePath = "src/files/mapping.xlsx";
-    private String xmlSourcePath = "src/files/allclasses.xml";
-
     private IRISConnection connection;
     private IRIS iris;
 
@@ -43,43 +54,56 @@ public class App {
     private String dataSourceType;
     private String schema;
 
+    private String scheduledTaskGroupIdToDelete;
+    private List<String> recipeIdsToDelete = new ArrayList<>();
+    private List<String> tableIdsToDelete = new ArrayList<>();
+
     private static final Logger log = LogManager.getLogger(App.class);
     public static void main(String[] args) throws Exception {
         log.info("Hello, World!");
 
         App app = new App();
 
-        if (args.length < 1) {
-            throw new Exception("Error: Missing arguments. At least 1 argument required");
-        }
-
-        if (args.length > 2) {
-            throw new Exception("Error: Too many arguments. Please enter at most 2 arguments");
-        }
-
         try {
-            String schema = "";
-
-            if (args.length == 2) {
-                schema = args[1];
-            }
-
-
-            app.run(args[0], schema);
+            app.run();
         }
         catch (Exception e) {
-            // app.cleanup();
             log.error("Run failed, ", e);
         }
     }
 
-    private void run(String dataSourceId, String schema) throws Exception {
-        setMapping();
+    @FunctionalInterface
+    public interface ExceptionHandler {
+        void handle() throws Exception;
+    }
+
+    private void run() throws Exception {
+        setConfig();
+
+        Map<String, ExceptionHandler> runTypeHandlers = new HashMap<>();
+        runTypeHandlers.put("generateArtifacts", () -> generateArtifacts());
+        runTypeHandlers.put("cleanupArtifacts", () -> cleanupArtifacts());
+        runTypeHandlers.put("createTargetTables", () -> createTargetTables());
+
+        String runType = config.getString("runType");
+
+        ExceptionHandler handler = runTypeHandlers.get(runType);
+        if (handler != null) {
+            handler.handle();
+        } else {
+            throw new IllegalArgumentException("Invalid runType: " + runType);
+        }
+    }
+
+    private void generateArtifacts() throws Exception {
+        log.info("generateArtifacts()");
 
         connectToIRIS();
 
-        this.dataSourceId = duplicateDataSource(Integer.parseInt(dataSourceId));
-        this.schema = schema;
+        setMapping();
+
+        this.dataSourceId = duplicateDataSource(config.getInt("generateArtifacts.dataSourceId"));
+        this.schema = config.getString("generateArtifacts.schema");
 
         JSONArray dataSourceItems = getDataSourceItems();
         importDataSchemaDefinitions(dataSourceItems);
@@ -91,38 +115,44 @@ public class App {
             createScheduledTasks();
         }
 
+        createArtifactIdFile();
+    }
+
+    private void cleanupArtifacts() throws Exception {
+        log.info("cleanupArtifacts()");
+
+        connectToIRIS();
+
+        cleanup(config.getString("cleanupArtifacts.cleanupSourcePath"));
+    }
+
+    private void createTargetTables() throws Exception {
+        log.info("createTargetTables()");
+
+        String xmlSourcePath = config.getString("createTargetTables.xmlSourcePath");
         File file = new File(xmlSourcePath);
 
         if (file.exists()) {
+            setMapping();
+
             XMLProcessor xmlProcessor = new XMLProcessor(dataSourceType, xmlSourcePath);
-            xmlProcessor.process(Arrays.asList("Staging"));
+            List<String> tableKeywords = groups.stream()
+                                               .map(element -> String.format("Staging.%s", element))
+                                               .collect(Collectors.toList());
+            xmlProcessor.process(tableKeywords);
         }
+    }
 
-        // exportBundle();
+    private void setConfig() {
+        log.info("setConfig()");
 
-        Scanner scanner = new Scanner(System.in);
-
-        while (true) {
-            System.out.print("Would you like to clean up the artifacts you've created? (yes/no): ");
-            String input = scanner.nextLine().trim().toLowerCase();
-
-            if (input.equals("yes")) {
-                cleanup();
-                break;
-            } else if (input.equals("no")) {
-                break;
-            } else {
-                System.out.println("Invalid input. Please type 'yes' or 'no'.");
-            }
-        }
-
-        scanner.close();
+        config = ConfigFactory.load();
     }
 
     private void setMapping() {
         log.info("setMapping()");
 
-        ExcelReader excelReader = new ExcelReader(mappingSourcePath);
+        ExcelReader excelReader = new ExcelReader(config.getString("generateArtifacts.mappingSourcePath"));
         groups = excelReader.getUniqueGroupNames();
         tables = excelReader.getAllTableNames();
         groupTableMapping = excelReader.getGroupTableMap();
@@ -131,8 +161,11 @@ public class App {
     private void connectToIRIS() throws Exception {
         log.info("connectToIRIS()");
 
-        IrisDatabaseConnection conn = new IrisDatabaseConnection();
-        IRISDataSource dataSource = conn.createDataSource();
+        IRISDataSource dataSource = IrisDatabaseConnection.createDataSource(config.getString("database.server"),
+                                                                            config.getInt("database.port"),
+                                                                            config.getString("database.database"),
+                                                                            config.getString("database.user"),
+                                                                            config.getString("database.password"));
         connection = (IRISConnection) dataSource.getConnection();
         iris = IRIS.createIRIS(connection);
     }
@@ -510,33 +543,131 @@ public class App {
         }
     }
 
-    private void exportBundle() {
-        log.info("exportBundle()");
+    private void createArtifactIdFile() {
+        Workbook workbook = new XSSFWorkbook();
 
-        IRISObject configExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
-        IRISObject items = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
+        Sheet sheet = workbook.createSheet("Artifacts");
 
-        tableGuids.forEach((table, guid) -> {
-            IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
-            configExportListItem.set("fileName", String.format("ISC%sPackageSource-%s.TotalViewDataSchemaDefinition", dataSourceType, table));
-            configExportListItem.set("guid", guid);
-            items.invoke("Insert", configExportListItem);
-        });
+        Row row = sheet.createRow(0);
 
-        recipeGuids.forEach((recipe, guid) -> {
-            IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
-            configExportListItem.set("fileName", String.format("%s.TotalViewRecipe", recipe));
-            configExportListItem.set("guid", guid);
-            items.invoke("Insert", configExportListItem);
-        });
+        row.createCell(0).setCellValue("Data Source Id");
+        row.createCell(1).setCellValue("Scheduled Task Group Id");
+        row.createCell(2).setCellValue("Recipe Ids");
+        row.createCell(3).setCellValue("Data Schema Definition Ids");
 
-        configExportList.set("items", items);
+        row = sheet.createRow(1);
 
-        IRISObject exportBundle = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.Bundle", "%New");
-        exportBundle = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigExport", configExportList);
+        Cell cell = row.createCell(0);
+        cell.setCellValue(dataSourceId);
+        cell = row.createCell(1);
+        cell.setCellValue(scheduledTaskGroupId);
+
+        for (int i = 0; i < recipeIds.size(); i++) {
+            row = sheet.getRow(i + 1);
+            if (row == null) {
+                row = sheet.createRow(i + 1);
+            }
+            cell = row.createCell(2);
+            cell.setCellValue(recipeIds.get(i));
+        }
+
+        Iterator<String> tableIdIterator = tableIds.values().iterator();
+
+        int rowIndex = 1;
+
+        while (tableIdIterator.hasNext()) {
+            row = sheet.getRow(rowIndex);
+            if (row == null) {
+                row = sheet.createRow(rowIndex);
+            }
+
+            cell = row.createCell(3);
+            cell.setCellValue(tableIdIterator.next());
+
+            rowIndex++;
+        }
+
+        for (int i = 0; i < 3; i++) {
+            sheet.autoSizeColumn(i);
+        }
+
+        String datetime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
+        try (FileOutputStream fileOut = new FileOutputStream(String.format("src/main/resources/artifacts/%s.xlsx", datetime))) {
+            workbook.write(fileOut);
+            log.info("Excel file created successfully!");
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                workbook.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
-    private void cleanup() {
+    // private void exportBundle() {
+    //     log.info("exportBundle()");
+
+    //     IRISObject configExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
+    //     IRISObject items = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
+
+    //     tableGuids.forEach((table, guid) -> {
+    //         IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
+    //         configExportListItem.set("fileName", String.format("ISC%sPackageSource-%s.TotalViewDataSchemaDefinition", dataSourceType, table));
+    //         configExportListItem.set("guid", guid);
+    //         items.invoke("Insert", configExportListItem);
+    //     });
+
+    //     recipeGuids.forEach((recipe, guid) -> {
+    //         IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
+    //         configExportListItem.set("fileName", String.format("%s.TotalViewRecipe", recipe));
+    //         configExportListItem.set("guid", guid);
+    //         items.invoke("Insert", configExportListItem);
+    //     });
+
+    //     configExportList.set("items", items);
+
+    //     IRISObject exportBundle = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.Bundle", "%New");
+    //     exportBundle = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigExport", configExportList);
+    // }
+
+    private void cleanup(String cleanupFile) {
+        log.info("cleanup()");
+
+        try (FileInputStream fis = new FileInputStream(new File(cleanupFile));
+            Workbook workbook = new XSSFWorkbook(fis)) {
+
+            Sheet sheet = workbook.getSheetAt(0);
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row row = sheet.getRow(i);
+                if (row != null) {
+                    if (i == 1) {
+                        Cell dataSourceCell = row.getCell(0);
+                        if (dataSourceCell != null) {
+                            dataSourceId = (int) Double.parseDouble(dataSourceCell.toString());
+                        }
+                        Cell taskGroupCell = row.getCell(1);
+                        if (taskGroupCell != null) {
+                            scheduledTaskGroupIdToDelete = taskGroupCell.toString();
+                        }
+                    }
+                    Cell recipeCell = row.getCell(2);
+                    if (recipeCell != null) {
+                        recipeIdsToDelete.add(recipeCell.toString());
+                    }
+                    Cell tableCell = row.getCell(3);
+                    if (tableCell != null) {
+                        tableIdsToDelete.add(tableCell.toString());
+                    }
+                }
+            }
+        }
+        catch (IOException e) {
+            log.error("Error reading Excel file: " + e.getMessage());
+        }
+
         deleteScheduledTasks();
         deleteRecipes();
         deleteDataSchemaDefinitions();
@@ -546,13 +677,13 @@ public class App {
     private void deleteScheduledTasks() {
         log.info("deleteScheduledTasks()");
 
-        log.info(String.format("Deleting scheduled task group with id %s", scheduledTaskGroupId));
-        iris.classMethodVoid("SDS.API.BusinessSchedulerAPI", "ScheduledTaskDelete", Integer.parseInt(scheduledTaskGroupId));
+        log.info(String.format("Deleting scheduled task group with id %s", scheduledTaskGroupIdToDelete));
+        iris.classMethodVoid("SDS.API.BusinessSchedulerAPI", "ScheduledTaskDelete", Integer.parseInt(scheduledTaskGroupIdToDelete));
     }
 
     private void deleteRecipes(){
         log.info("deleteRecipes()");
-        for (String id : recipeIds) {
+        for (String id : recipeIdsToDelete) {
             log.info(String.format("Deleting recipe with id %s", id));
             iris.classMethodVoid("SDS.API.RecipesAPI", "DeleteRecipeActivitiesAndRecords", Integer.parseInt(id), true);
             IRISObject deleteRecipeResp = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCleaningResponse", "%New");
@@ -562,7 +693,7 @@ public class App {
 
     private void deleteDataSchemaDefinitions(){
         log.info("deleteDataSchemaDefinitions()");
-        for (String id : tableIds.values()) {
+        for (String id : tableIdsToDelete) {
             log.info(String.format("Deleting data schema definition with id %s", id));
             iris.classMethodVoid("SDS.API.DataCatalogAPI", "SchemaDefinitionDelete", Integer.parseInt(id));
         }
