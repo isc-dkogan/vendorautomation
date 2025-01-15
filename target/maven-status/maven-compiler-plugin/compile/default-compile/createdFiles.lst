@@ -1,2 +1,7 @@
+com/intersystems/vendorautomation/CreateYAMLS.class
+com/intersystems/vendorautomation/App$ExceptionHandler.class
 com/intersystems/vendorautomation/App.class
+com/intersystems/vendorautomation/XMLProcessor.class
+com/intersystems/vendorautomation/ExcelReader.class
 com/intersystems/vendorautomation/IrisDatabaseConnection.class
+com/intersystems/vendorautomation/AppException.class

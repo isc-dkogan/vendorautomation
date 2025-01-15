@@ -37,9 +37,9 @@ public class App {
 
     private Config config;
 
-    private Set<String> groups;
-    private Set<String> tables;
-    private Map<String, List<String>> groupTableMapping;
+    private Set<String> groups = new HashSet<>();
+    private Set<String> tables = new HashSet<>();
+    private Map<String, List<String>> groupTableMapping = new HashMap<>();
     private Map<String, String> tableIds = new HashMap<>();
     private Map<String, String> tableGuids = new HashMap<>();
     private Map<String, List<String>> tableFields = new HashMap<>();
@@ -60,8 +60,6 @@ public class App {
 
     private static final Logger log = LogManager.getLogger(App.class);
     public static void main(String[] args) throws Exception {
-        log.info("Hello, World!");
-
         App app = new App();
 
         try {
@@ -100,8 +98,6 @@ public class App {
 
         connectToIRIS();
 
-        setMapping();
-
         this.dataSourceId = duplicateDataSource(config.getInt("generateArtifacts.dataSourceId"));
         this.schema = config.getString("generateArtifacts.schema");
 
@@ -109,6 +105,7 @@ public class App {
         importDataSchemaDefinitions(dataSourceItems);
         publishDataSchemaDefinitions();
         setDataSchemaDefinitionInformation();
+        setMapping();
         createRecipes();
         boolean tablePopulated = waitForSchedulableResourceTablePopulation();
         if (tablePopulated) {
@@ -133,6 +130,8 @@ public class App {
         File file = new File(xmlSourcePath);
 
         if (file.exists()) {
+            dataSourceType = getDataSourceType(config.getInt("generateArtifacts.dataSourceId"));
+
             setMapping();
 
             XMLProcessor xmlProcessor = new XMLProcessor(dataSourceType, xmlSourcePath);
@@ -149,15 +148,6 @@ public class App {
         config = ConfigFactory.load();
     }
 
-    private void setMapping() {
-        log.info("setMapping()");
-
-        ExcelReader excelReader = new ExcelReader(config.getString("generateArtifacts.mappingSourcePath"));
-        groups = excelReader.getUniqueGroupNames();
-        tables = excelReader.getAllTableNames();
-        groupTableMapping = excelReader.getGroupTableMap();
-    }
-
     private void connectToIRIS() throws Exception {
         log.info("connectToIRIS()");
 
@@ -168,6 +158,19 @@ public class App {
                                                                             config.getString("database.password"));
         connection = (IRISConnection) dataSource.getConnection();
         iris = IRIS.createIRIS(connection);
+    }
+
+    private String getDataSourceType(int dataSourceId) {
+        try {
+            IRISObject originalDataSource;
+            originalDataSource = (IRISObject) iris.classMethodObject("SDS.DataLoader.DS.DataSource", "%OpenId", dataSourceId);
+
+            return ((String) originalDataSource.invoke("%GetParameter", "DATASOURCENAME")).split(" ")[0];
+        }
+        catch (Exception e) {
+            throw new AppException(String.format("Data source with id %d does not exist", dataSourceId), e);
+        }
+
     }
 
     private int duplicateDataSource(int dataSourceId) {
@@ -313,6 +316,7 @@ public class App {
 
             tableIds.put(table, id);
             tableGuids.put(table, guid);
+            tables.add(table);
             tableFields.computeIfAbsent(table, k -> new ArrayList<>()).add(field);
         }
 
@@ -342,6 +346,23 @@ public class App {
         stmt.close();
     }
 
+    private void setMapping() {
+        log.info("setMapping()");
+
+        String mappingSourcePath = config.getString("generateArtifacts.mappingSourcePath");
+        if (mappingSourcePath == "") {
+            String groupName = String.format("ISC%sPackageRecipe", dataSourceType);
+            groups.add(groupName);
+            groupTableMapping.put(groupName, new ArrayList<>(tables));
+        }
+        else {
+            ExcelReader excelReader = new ExcelReader(mappingSourcePath);
+            groups = excelReader.getUniqueGroupNames();
+            tables = excelReader.getAllTableNames();
+            groupTableMapping = excelReader.getGroupTableMap();
+        }
+    }
+
     private void createRecipes() {
         log.info("createRecipes()");
 
@@ -353,7 +374,7 @@ public class App {
             log.info(String.format("Creating %s recipe", group));
             IRISObject recipeCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreate", "%New");
             recipeCreateObj.set("name", group);
-            recipeCreateObj.set("shortName", group);
+            recipeCreateObj.set("shortName", group.length() > 15 ? group.substring(0, 15) : group);
             recipeCreateObj.set("groupId", Integer.parseInt(groupId));
 
             IRISObject recipeCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreateResponse", "%New");
@@ -592,7 +613,7 @@ public class App {
         }
 
         String datetime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
-        try (FileOutputStream fileOut = new FileOutputStream(String.format("src/main/resources/artifacts/%s.xlsx", datetime))) {
+        try (FileOutputStream fileOut = new FileOutputStream(String.format("%s/%s.xlsx", config.getString("generateArtifacts.artifactIdsFolder"), datetime))) {
             workbook.write(fileOut);
             log.info("Excel file created successfully!");
         } catch (IOException e) {
