@@ -189,7 +189,7 @@ public class App {
         IRISObject newDataSource = (IRISObject) originalDataSource.invoke("%ConstructClone", 0);
 
         this.dataSourceType = ((String) newDataSource.invoke("%GetParameter", "DATASOURCENAME")).split(" ")[0];
-        newDataSource.set("Name", String.format("ISC%sPackageSource", dataSourceType));
+        newDataSource.set("Name", String.format("ISC %s Package Source", dataSourceType));
 
         Long sc = (Long) newDataSource.invoke("%Save");
 
@@ -211,6 +211,7 @@ public class App {
         IRISObject dataSource = (IRISObject) iris.classMethodObject("SDS.DataLoader.DS.DataSource", "%OpenId", dataSourceId);
         Long capabilitiesCode = (Long) dataSource.invoke("%GetParameter", "DATASOURCECAPABILITIESCODE");
         Long supportsSchemaVal = (Long) dataSource.invoke("%GetParameter", "SUPPORTSSCHEMA");
+        String server = config.getString("database.server");
         supportsSchema = (capabilitiesCode.intValue() & supportsSchemaVal.intValue()) != 0;
 
         String urlString;
@@ -220,15 +221,15 @@ public class App {
             }
 
             String encodedParamValue = URLEncoder.encode(schema, "UTF-8");
-            urlString = String.format("http://localhost:8081/intersystems/data-loader/v1/dataSources/%s/schemas/members?schema=%s",
-                    dataSourceId, encodedParamValue);
+            urlString = String.format("http://%s/intersystems/data-loader/v1/dataSources/%s/schemas/members?schema=%s",
+            server, dataSourceId, encodedParamValue);
         }
         else {
             if (schema != "") {
                 throw new Exception(String.format("A schema %s was specified but the data source has no schemas.", schema));
             }
 
-            urlString = String.format("http://localhost:8081/intersystems/data-loader/v1/dataSources/%s/schemas/members", dataSourceId);
+            urlString = String.format("http://%s/intersystems/data-loader/v1/dataSources/%s/schemas/members", server, dataSourceId);
         }
 
         URL url = new URL(urlString);
@@ -237,7 +238,7 @@ public class App {
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
 
-        String userCredentials = "systemadmin:sys";
+        String userCredentials = String.format("%s:%s", config.getString("generateArtifacts.ui.user"), config.getString("generateArtifacts.ui.password"));
         String basicAuth = "Basic " + new String(Base64.getEncoder().encode(userCredentials.getBytes()));
         connection.setRequestProperty("Authorization", basicAuth);
 
@@ -351,7 +352,7 @@ public class App {
 
         String mappingSourcePath = config.getString("generateArtifacts.mappingSourcePath");
         if (mappingSourcePath == "") {
-            String groupName = String.format("ISC%sPackageRecipe", dataSourceType);
+            String groupName = String.format("ISC %s Package Recipe", dataSourceType);
             groups.add(groupName);
             groupTableMapping.put(groupName, new ArrayList<>(tables));
         }
@@ -363,12 +364,19 @@ public class App {
         }
     }
 
-    private void createRecipes() {
+    private void createRecipes() throws SQLException {
         log.info("createRecipes()");
 
         IRISObject recipeGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipeGroup.v1.recipeGroupCreate", "%New");
-        recipeGroupCreateObj.set("groupName", String.format("ISC%sPackageRecipes", dataSourceType));
-        String groupId = (String) iris.classMethodObject("SDS.API.RecipeGroupAPI", "RecipeGroupCreate", recipeGroupCreateObj);
+        String groupName = String.format("ISC %s Package", dataSourceType);
+        recipeGroupCreateObj.set("groupName", groupName);
+        String groupId;
+        try {
+            groupId = (String) iris.classMethodObject("SDS.API.RecipeGroupAPI", "RecipeGroupCreate", recipeGroupCreateObj);
+        }
+        catch (Exception e) {
+            groupId = getRecipeGroupId(groupName);
+        }
 
         for (String group : groups) {
             log.info(String.format("Creating %s recipe", group));
@@ -494,6 +502,22 @@ public class App {
         }
     }
 
+    private String getRecipeGroupId(String recipeGroupName) throws SQLException {
+        log.info("getRecipeGroupId()");
+
+        String query = "SELECT ID FROM SDS_DataLoader.RecipeGroup WHERE Name = ?";
+
+
+        PreparedStatement stmt = connection.prepareStatement(query);
+        stmt.setString(1, recipeGroupName);
+        ResultSet rs = stmt.executeQuery();
+
+        rs.next();
+        String id = rs.getString("ID");
+
+        return id;
+    }
+
     public boolean waitForSchedulableResourceTablePopulation() throws SQLException, InterruptedException {
         log.info("waitForSchedulableResourceTablePopulation()");
 
@@ -533,7 +557,7 @@ public class App {
 
         IRISObject scheduledTaskGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreate", "%New");
         scheduledTaskGroupCreateObj.set("enabled", true);
-        scheduledTaskGroupCreateObj.set("taskDescription", String.format("ISC%sPackageTaskGroup", dataSourceType));
+        scheduledTaskGroupCreateObj.set("taskDescription", String.format("ISC %s Package", dataSourceType));
         scheduledTaskGroupCreateObj.set("scheduledTaskType", "1");
         scheduledTaskGroupCreateObj.set("schedulingType", "1");
 
