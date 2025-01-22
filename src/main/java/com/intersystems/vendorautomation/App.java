@@ -317,7 +317,8 @@ public class App {
 
             tableIds.put(table, id);
             tableGuids.put(table, guid);
-            tables.add(table);
+            String schemaName = config.getString("generateArtifacts.schema");
+            tables.add((schemaName == "") ? table : table.substring(schemaName.length()));
             tableFields.computeIfAbsent(table, k -> new ArrayList<>()).add(field);
         }
 
@@ -715,6 +716,7 @@ public class App {
 
         deleteScheduledTasks();
         deleteRecipes();
+        deleteRecipeGroup();
         deleteDataSchemaDefinitions();
         deleteDataSource();
     }
@@ -734,6 +736,19 @@ public class App {
             IRISObject deleteRecipeResp = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCleaningResponse", "%New");
             deleteRecipeResp = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "PermanentlyDeleteRecipe", Integer.parseInt(id), false);
         }
+    }
+
+    private void deleteRecipeGroup() throws SQLException {
+        log.info("deleteRecipes()");
+
+        String recipeGroupName = String.format("ISC %s Package", dataSourceType);
+
+        String query = "DELETE FROM SDS_DataLoader.RecipeGroup WHERE Name = ?";
+
+
+        PreparedStatement stmt = connection.prepareStatement(query);
+        stmt.setString(1, recipeGroupName);
+        ResultSet rs = stmt.executeQuery();
     }
 
     private void deleteDataSchemaDefinitions(){
