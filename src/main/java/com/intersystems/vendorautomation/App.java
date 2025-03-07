@@ -51,6 +51,7 @@ public class App {
     private IRIS iris;
 
     private int dataSourceId;
+    private String baseName;
     private String dataSourceType;
     private String schema;
 
@@ -97,6 +98,8 @@ public class App {
         log.info("generateArtifacts()");
 
         connectToIRIS();
+
+        this.baseName = config.getString("generateArtifacts.name");
 
         this.dataSourceId = duplicateDataSource(config.getInt("generateArtifacts.dataSourceId"));
         this.schema = config.getString("generateArtifacts.schema");
@@ -145,17 +148,25 @@ public class App {
     private void setConfig() {
         log.info("setConfig()");
 
-        config = ConfigFactory.load();
+        String configFilePath = System.getProperty("config.file");
+        if (configFilePath != null) {
+            config = ConfigFactory.parseFile(new File(configFilePath)).resolve();
+        } else {
+            config = ConfigFactory.load();
+        }
     }
 
     private void connectToIRIS() throws Exception {
         log.info("connectToIRIS()");
 
-        IRISDataSource dataSource = IrisDatabaseConnection.createDataSource(config.getString("database.server"),
-                                                                            config.getInt("database.port"),
-                                                                            config.getString("database.database"),
-                                                                            config.getString("database.user"),
-                                                                            config.getString("database.password"));
+        String server = config.getString("database.server");
+        int port = config.getInt("database.port");
+        String database = config.getString("database.database");
+        String user = config.getString("database.user");
+
+        log.info(String.format("Connecting to IRIS server at %s:%d, database=%s, user=%s", server, port, database, user));
+
+        IRISDataSource dataSource = IrisDatabaseConnection.createDataSource(server, port, database, user, config.getString("database.password"));
         connection = (IRISConnection) dataSource.getConnection();
         iris = IRIS.createIRIS(connection);
     }
@@ -173,8 +184,12 @@ public class App {
 
     }
 
-    private int duplicateDataSource(int dataSourceId) {
+    private int duplicateDataSource(int dataSourceId) throws Exception {
         log.info("duplicateDataSource()");
+
+        if (dataSourceNameExists(baseName)) {
+            throw new Exception(String.format("Data source with name %s already exists. Please specify a different name", baseName));
+        }
 
         int newDataSourceId;
         IRISObject originalDataSource;
@@ -185,19 +200,28 @@ public class App {
         catch (Exception e) {
             throw new AppException(String.format("Data source with id %d does not exist", dataSourceId), e);
         }
-
         IRISObject newDataSource = (IRISObject) originalDataSource.invoke("%ConstructClone", 0);
 
-        this.dataSourceType = ((String) newDataSource.invoke("%GetParameter", "DATASOURCENAME")).split(" ")[0];
-        newDataSource.set("Name", String.format("ISC %s Package Source", dataSourceType));
+        newDataSource.set("Name", baseName);
 
-        Long sc = (Long) newDataSource.invoke("%Save");
+        Object sc;
+        sc = newDataSource.invoke("%Save");
+
+        if (sc == null) {
+            throw new Exception("Could not create data source");
+        }
+        else if ((sc instanceof String) && (((String) sc).charAt(0) == '0')) {
+            throw new Exception("Could not create data source:" + ((String) sc).substring(1));
+        }
 
         String id = (String) newDataSource.invoke("%Id");
+        if (id == null) {
+            throw new Exception("Error retrieving new data source ID");
+        }
 
         newDataSourceId = Integer.parseInt(id);
 
-        log.info("New data source created with id = " + newDataSourceId);
+        log.info("New data source %s created with id=%s ", newDataSource.get("Name"), newDataSourceId);
 
         return newDataSourceId;
     }
@@ -239,7 +263,7 @@ public class App {
         connection.setRequestMethod("GET");
 
         String userCredentials = String.format("%s:%s", config.getString("generateArtifacts.ui.user"), config.getString("generateArtifacts.ui.password"));
-        String basicAuth = "Basic " + new String(Base64.getEncoder().encode(userCredentials.getBytes()));
+        String basicAuth = String.format("Basic %s", new String(Base64.getEncoder().encode(userCredentials.getBytes())));
         connection.setRequestProperty("Authorization", basicAuth);
 
         int responseCode = connection.getResponseCode();
@@ -275,7 +299,7 @@ public class App {
         return itemsArray;
     }
 
-    private void importDataSchemaDefinitions(JSONArray itemsArray) {
+    private void importDataSchemaDefinitions(JSONArray itemsArray) throws Exception {
         log.info("importDataSchemaDefinitions()");
 
         IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
@@ -290,7 +314,16 @@ public class App {
             importRequest.set("SchemaName", schema);
             importRequest.set("SendAsync", false);
 
-            Long sc = (Long) dataCatalogService.invoke("ProcessInput", importRequest);
+            Object sc;
+            sc = dataCatalogService.invoke("ProcessInput", importRequest);
+
+            if (sc == null) {
+                throw new Exception("Could not import data schema definitions.");
+            }
+            else if ((sc instanceof String) && (((String) sc).charAt(0) == '0')) {
+                throw new Exception("Could not import data schema definitions:" + ((String) sc).substring(1));
+            }
+
             log.info(String.format("Imported item %d: %s", i + 1, item.toString()));
         }
     }
@@ -353,7 +386,7 @@ public class App {
 
         String mappingSourcePath = config.getString("generateArtifacts.mappingSourcePath");
         if (mappingSourcePath == "") {
-            String groupName = String.format("ISC %s Package Recipe", dataSourceType);
+            String groupName = baseName;
             groups.add(groupName);
             groupTableMapping.put(groupName, new ArrayList<>(tables));
         }
@@ -369,7 +402,13 @@ public class App {
         log.info("createRecipes()");
 
         IRISObject recipeGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipeGroup.v1.recipeGroupCreate", "%New");
-        String groupName = String.format("ISC %s Package", dataSourceType);
+        String groupName = String.format("%s Recipe Group", baseName);
+        int suffix = 2;
+        while (recipeNameExists(groupName) || recipeGroupNameExists(groupName)) {
+            log.info(String.format("Recipe or RecipeGroup with name %s already exists. Trying %s %d", groupName, baseName, suffix));
+            suffix++;
+            groupName = String.format("%s %d", baseName, suffix);
+        }
         recipeGroupCreateObj.set("groupName", groupName);
         String groupId;
         try {
@@ -382,8 +421,15 @@ public class App {
         for (String group : groups) {
             log.info(String.format("Creating %s recipe", group));
             IRISObject recipeCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreate", "%New");
-            recipeCreateObj.set("name", group);
-            recipeCreateObj.set("shortName", group.length() > 15 ? group.substring(0, 15) : group);
+            String recipeName = group;
+            suffix = 2;
+            while (recipeNameExists(recipeName) || recipeGroupNameExists(recipeName)) {
+                log.info(String.format("Recipe or RecipeGroup with name %s already exists. Trying %s %d", recipeName, group, suffix));
+                suffix++;
+                recipeName = String.format("%s %d", group, suffix);
+            }
+            recipeCreateObj.set("name", recipeName);
+            recipeCreateObj.set("shortName", recipeName.length() > 15 ? recipeName.substring(0, 15) : recipeName);
             recipeCreateObj.set("groupId", Integer.parseInt(groupId));
 
             IRISObject recipeCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.recipe.RecipeCreateResponse", "%New");
@@ -392,6 +438,7 @@ public class App {
             recipeGuids.put(group, (String) recipeCreateRespObj.get("recipeGUID"));
             recipeIds.add((String) recipeCreateRespObj.get("id"));
 
+            log.info("Creating staging activity");
             IRISObject stagingActivityCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityCreate", "%New");
             stagingActivityCreateObj.set("name", "StagingActivity");
             stagingActivityCreateObj.set("shortName", "SA");
@@ -404,6 +451,7 @@ public class App {
             stagingActivityUpdateObj.set("name", stagingActivityCreateRespObj.get("name"));
             stagingActivityUpdateObj.set("saveVersion", 1);
 
+            log.info("Creating promotion activity");
             IRISObject promotionActivityCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityCreate", "%New");
             promotionActivityCreateObj.set("name", "PromotionActivity");
             promotionActivityCreateObj.set("runOrder", 1);
@@ -477,6 +525,7 @@ public class App {
                 updatePromotionActivityItemCreateObj.set("activitySaveVersion", (i + 2)*2);
                 updatePromotionActivityItemCreateObj.set("runOrder", (i+1)*10);
 
+                log.info(String.format("Creating promotion activity item %s", String.format("%s Update", table)));
                 IRISObject updatePromotionActivityItemCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityItemCreateResponse", "%New");
                 updatePromotionActivityItemCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "PromotionActivityItemCreate", promotionActivityCreateRespObj.get("id"), updatePromotionActivityItemCreateObj);
 
@@ -486,17 +535,27 @@ public class App {
                 insertPromotionActivityItemCreateObj.set("activitySaveVersion", (i + 3)*2);
                 insertPromotionActivityItemCreateObj.set("runOrder", (i+1)*10 + 1);
 
+                log.info(String.format("Creating promotion activity item %s", String.format("%s Insert", table)));
                 IRISObject insertPromotionActivityItemCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.promotion.PromotionActivityItemCreateResponse", "%New");
                 insertPromotionActivityItemCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "PromotionActivityItemCreate", promotionActivityCreateRespObj.get("id"), insertPromotionActivityItemCreateObj);
             }
             stagingActivityUpdateObj.set("dataSchemas", dataSchemas);
 
+            log.info("Setting daata schemas for staging activity");
             IRISObject stagingActivityUpdateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityUpdateResponse", "%New");
             stagingActivityUpdateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivityUpdate", stagingActivityCreateRespObj.get("id"), stagingActivityUpdateObj);
 
             // IRISObject stagingActivity = (IRISObject) iris.classMethodObject("SDS.DataLoader.Staging.StagingActivity", "%OpenId", stagingActivityUpdateRespObj.get("id"));
             // stagingActivity.set("Editing", false);
-            // Long sc = (Long) stagingActivity.invoke("%Save");
+            // Object sc;
+            // sc = stagingActivity.invoke("%Save");
+
+            // if (sc == null) {
+            //     throw new Exception("Could not create staging activity");
+            // }
+            // else if ((sc instanceof String) && (((String) sc).charAt(0) == '0')) {
+            //     throw new Exception("Could not create staging activity:" + ((String) sc).substring(1));
+            // }
 
             // IRISObject stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivitySessionResponse", "%New");
             // stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivitySessionClose", stagingActivityUpdateRespObj.get("id"), true, false);
@@ -515,9 +574,15 @@ public class App {
 
         rs.next();
         String id = rs.getString("ID");
+        stmt.close();
 
         return id;
     }
+
+    /*****************************************************************************
+        Checking if SchedulableResource table is populated with new recipes
+        Recipes must be available as SchedulableResources before creating Scheduled Tasks
+     *****************************************************************************/
 
     public boolean waitForSchedulableResourceTablePopulation() throws SQLException, InterruptedException {
         log.info("waitForSchedulableResourceTablePopulation()");
@@ -553,12 +618,20 @@ public class App {
         return tableUpdated;
     }
 
-    private void createScheduledTasks() {
+    private void createScheduledTasks() throws Exception {
         log.info("createScheduledTasks()");
 
         IRISObject scheduledTaskGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreate", "%New");
         scheduledTaskGroupCreateObj.set("enabled", true);
-        scheduledTaskGroupCreateObj.set("taskDescription", String.format("ISC %s Package", dataSourceType));
+        String scheduledTaskGroupName = baseName;
+        int suffix = 2;
+        while (scheduledTaskDescriptionExists(scheduledTaskGroupName)) {
+            log.info(String.format("ScheduledTask with description %s already exists. Trying %s %d", scheduledTaskGroupName, baseName, suffix));
+            suffix++;
+            scheduledTaskGroupName = String.format("%s %d", baseName, suffix);
+        }
+        log.info(String.format("Creating ScheduledTaskGroup %s", scheduledTaskGroupName));
+        scheduledTaskGroupCreateObj.set("taskDescription", scheduledTaskGroupName);
         scheduledTaskGroupCreateObj.set("scheduledTaskType", "1");
         scheduledTaskGroupCreateObj.set("schedulingType", "1");
 
@@ -568,12 +641,20 @@ public class App {
         scheduledTaskGroupId = (String) scheduledTaskGroupCreateRespObj.get("id");
 
         for (String group : groups) {
+            log.info(String.format("Creating ScheduledTask for resource %s", recipeGuids.get(group)));
             IRISObject scheduledTaskCreateObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreate", "%New");
             scheduledTaskCreateObj.set("enabled", true);
             scheduledTaskCreateObj.set("entityId", 1);
             scheduledTaskCreateObj.set("exceptionWorkflowRole", "System Administrator");
             scheduledTaskCreateObj.set("dependencyInactivityTimeout", 300);
-            scheduledTaskCreateObj.set("taskDescription", group);
+            String scheduledTaskName = group;
+            suffix = 2;
+            while (scheduledTaskDescriptionExists(scheduledTaskName)) {
+                log.info(String.format("ScheduledTask with description %s already exists. Trying %s %d", scheduledTaskName, group, suffix));
+                suffix++;
+                scheduledTaskName = String.format("%s %d", group, suffix);
+            }
+            scheduledTaskCreateObj.set("taskDescription", scheduledTaskName);
             scheduledTaskCreateObj.set("scheduledTaskType", "0");
             scheduledTaskCreateObj.set("schedulingType", "1");
             scheduledTaskCreateObj.set("schedulingGroup", scheduledTaskGroupCreateRespObj.get("id"));
@@ -588,6 +669,65 @@ public class App {
             scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.BusinessSchedulerAPI", "ScheduledTaskCreate", scheduledTaskCreateObj);
         }
     }
+
+    /*****************************************************************************
+        Methods to check if a specific name exists in the database.
+        These methods query the database to determine if a data source, recipe, recipe group, or scheduled task
+        with the given name already exists. They return a boolean indicating the presence of the name.
+     *****************************************************************************/
+
+     private boolean dataSourceNameExists(String name) throws SQLException {
+        String query = "SELECT 1 FROM SDS_DataLoader_DS.DataSource WHERE Name = ? AND Deleted = 0";
+        PreparedStatement stmt = connection.prepareStatement(query);
+        stmt.setString(1, name);
+        ResultSet rs = stmt.executeQuery();
+
+        boolean exists = rs.next();
+        stmt.close();
+
+        return exists;
+    }
+
+    private boolean recipeNameExists(String name) throws SQLException {
+        String query = "SELECT 1 FROM SDS_DataLoader.Recipe WHERE Name = ?";
+        PreparedStatement stmt = connection.prepareStatement(query);
+        stmt.setString(1, name);
+        ResultSet rs = stmt.executeQuery();
+
+        boolean exists = rs.next();
+        stmt.close();
+
+        return exists;
+    }
+
+    private boolean recipeGroupNameExists(String name) throws SQLException {
+        String query = "SELECT 1 FROM SDS_DataLoader.RecipeGroup WHERE Name = ?";
+        PreparedStatement stmt = connection.prepareStatement(query);
+        stmt.setString(1, name);
+        ResultSet rs = stmt.executeQuery();
+
+        boolean exists = rs.next();
+        stmt.close();
+
+        return exists;
+    }
+
+    private boolean scheduledTaskDescriptionExists(String name) throws SQLException {
+        log.info("scheduledTaskDescriptionExists()");
+        String query = "SELECT 1 FROM SDS_BusinessScheduler.ScheduledTask WHERE TaskDescription = ? AND Deleted = 0";
+        PreparedStatement stmt = connection.prepareStatement(query);
+        stmt.setString(1, name);
+        ResultSet rs = stmt.executeQuery();
+
+        boolean exists = rs.next();
+        stmt.close();
+        return exists;
+    }
+
+    /*****************************************************************************
+        Creating artifact files
+        These files are necessary for a cleanup run
+     *****************************************************************************/
 
     private void createArtifactIdFile() {
         Workbook workbook = new XSSFWorkbook();
@@ -652,33 +792,11 @@ public class App {
         }
     }
 
-    // private void exportBundle() {
-    //     log.info("exportBundle()");
+    /*****************************************************************************
+        CLEANUP METHODS
+     *****************************************************************************/
 
-    //     IRISObject configExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
-    //     IRISObject items = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
-
-    //     tableGuids.forEach((table, guid) -> {
-    //         IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
-    //         configExportListItem.set("fileName", String.format("ISC%sPackageSource-%s.TotalViewDataSchemaDefinition", dataSourceType, table));
-    //         configExportListItem.set("guid", guid);
-    //         items.invoke("Insert", configExportListItem);
-    //     });
-
-    //     recipeGuids.forEach((recipe, guid) -> {
-    //         IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
-    //         configExportListItem.set("fileName", String.format("%s.TotalViewRecipe", recipe));
-    //         configExportListItem.set("guid", guid);
-    //         items.invoke("Insert", configExportListItem);
-    //     });
-
-    //     configExportList.set("items", items);
-
-    //     IRISObject exportBundle = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.Bundle", "%New");
-    //     exportBundle = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigExport", configExportList);
-    // }
-
-    private void cleanup(String cleanupFile) {
+    private void cleanup(String cleanupFile) throws Exception {
         log.info("cleanup()");
 
         try (FileInputStream fis = new FileInputStream(new File(cleanupFile));
@@ -741,7 +859,7 @@ public class App {
     private void deleteRecipeGroup() throws SQLException {
         log.info("deleteRecipes()");
 
-        String recipeGroupName = String.format("ISC %s Package", dataSourceType);
+        String recipeGroupName = baseName;
 
         String query = "DELETE FROM SDS_DataLoader.RecipeGroup WHERE Name = ?";
 
@@ -749,6 +867,7 @@ public class App {
         PreparedStatement stmt = connection.prepareStatement(query);
         stmt.setString(1, recipeGroupName);
         ResultSet rs = stmt.executeQuery();
+        stmt.close();
     }
 
     private void deleteDataSchemaDefinitions(){
@@ -765,4 +884,30 @@ public class App {
         log.info(String.format("Deleting data source with id %s", dataSourceId));
         iris.classMethodVoid("SDS.API.DataSourceAPI", "DataSourceDelete", dataSourceId);
     }
+
+    // private void exportBundle() {
+    //     log.info("exportBundle()");
+
+    //     IRISObject configExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
+    //     IRISObject items = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
+
+    //     tableGuids.forEach((table, guid) -> {
+    //         IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
+    //         configExportListItem.set("fileName", String.format("ISC%sPackageSource-%s.TotalViewDataSchemaDefinition", dataSourceType, table));
+    //         configExportListItem.set("guid", guid);
+    //         items.invoke("Insert", configExportListItem);
+    //     });
+
+    //     recipeGuids.forEach((recipe, guid) -> {
+    //         IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
+    //         configExportListItem.set("fileName", String.format("%s.TotalViewRecipe", recipe));
+    //         configExportListItem.set("guid", guid);
+    //         items.invoke("Insert", configExportListItem);
+    //     });
+
+    //     configExportList.set("items", items);
+
+    //     IRISObject exportBundle = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.Bundle", "%New");
+    //     exportBundle = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigExport", configExportList);
+    // }
 }
