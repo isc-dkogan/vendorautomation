@@ -239,6 +239,7 @@ public class App {
         supportsSchema = (capabilitiesCode.intValue() & supportsSchemaVal.intValue()) != 0;
 
         String urlString;
+        String serverString = config.hasPath("generateArtifacts.ui.port") ? String.format("%s:%d", server, config.getInt("generateArtifacts.ui.port")) : server;
         if (supportsSchema) {
             if (schema == "") {
                 throw new Exception("Data source requires schema, but no schema specified.");
@@ -246,14 +247,14 @@ public class App {
 
             String encodedParamValue = URLEncoder.encode(schema, "UTF-8");
             urlString = String.format("http://%s/intersystems/data-loader/v1/dataSources/%s/schemas/members?schema=%s",
-            server, dataSourceId, encodedParamValue);
+            serverString, dataSourceId, encodedParamValue);
         }
         else {
             if (schema != "") {
                 throw new Exception(String.format("A schema %s was specified but the data source has no schemas.", schema));
             }
 
-            urlString = String.format("http://%s/intersystems/data-loader/v1/dataSources/%s/schemas/members", server, dataSourceId);
+            urlString = String.format("http://%s/intersystems/data-loader/v1/dataSources/%s/schemas/members", serverString, dataSourceId);
         }
 
         URL url = new URL(urlString);
