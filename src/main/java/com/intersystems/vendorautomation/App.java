@@ -951,64 +951,52 @@ public class App {
     }
 
     private File exportUDLStreamAndZip(IRISObject itemsList, String label) throws Exception {
-        List<File> exportedFiles = new ArrayList<>();
         Path outputDir = Paths.get("exports");
         Files.createDirectories(outputDir);
 
-        long count = (Long) itemsList.invoke("Count");
-        for (int i = 1; i <= count; i++) {
-            IRISObject item = (IRISObject) itemsList.invoke("GetAt", i);
-            String fileName = (String) item.get("fileName");
-            if (fileName == null || fileName.isEmpty()) continue;
-
-            String safeName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_") + ".xml";
-            Path outputFile = outputDir.resolve(safeName);
-            String irisFilePath = "/tmp/" + safeName;
-
-            Long status = (Long) iris.classMethodObject("%SYSTEM.OBJ", "ExportUDL", fileName, irisFilePath);
-            boolean ok = iris.classMethodBoolean("%SYSTEM.Status", "IsOK", status);
-            if (!ok) {
-                String err = iris.classMethodString("%SYSTEM.Status", "GetErrorText", status);
-                throw new IOException("Failed to export UDL for " + fileName + ": " + err);
-            }
-
-            IRISObject stream = (IRISObject) iris.classMethodObject("%Stream.FileCharacter", "%New");
-            stream.set("Filename", irisFilePath);
-            stream.invoke("Rewind");
-
-            try (BufferedWriter writer = Files.newBufferedWriter(outputFile)) {
-                while (true) {
-                    String chunk = (String) stream.invoke("Read", 1024);
-                    if (chunk == null || chunk.isEmpty()) break;
-                    writer.write(chunk);
-                }
-            }
-
-            stream.close();
-            exportedFiles.add(outputFile.toFile());
-            log.info("Exported and saved: " + outputFile.getFileName());
-        }
-
-        // Zip everything
         String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
         Path zipPath = outputDir.resolve(label + "_Bundle_" + timestamp + ".zip");
 
         try (ZipOutputStream zipOut = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
-            for (File file : exportedFiles) {
-                try (FileInputStream fis = new FileInputStream(file)) {
-                    zipOut.putNextEntry(new ZipEntry(file.getName()));
-                    byte[] buffer = new byte[4096];
-                    int len;
-                    while ((len = fis.read(buffer)) > 0) {
-                        zipOut.write(buffer, 0, len);
-                    }
-                    zipOut.closeEntry();
+            long count = (Long) itemsList.invoke("Count");
+
+            for (int i = 1; i <= count; i++) {
+                IRISObject item = (IRISObject) itemsList.invoke("GetAt", i);
+                String fileName = (String) item.get("fileName");
+                if (fileName == null || fileName.isEmpty()) continue;
+
+                String safeName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_") + ".yaml";
+                String irisFilePath = "/tmp/" + safeName;
+
+                Long status = (Long) iris.classMethodObject("%SYSTEM.OBJ", "ExportUDL", fileName, irisFilePath);
+                boolean ok = iris.classMethodBoolean("%SYSTEM.Status", "IsOK", status);
+                if (!ok) {
+                    String err = iris.classMethodString("%SYSTEM.Status", "GetErrorText", status);
+                    throw new IOException("Failed to export UDL for " + fileName + ": " + err);
                 }
+
+                IRISObject stream = (IRISObject) iris.classMethodObject("%Stream.FileCharacter", "%New");
+                stream.set("Filename", irisFilePath);
+                stream.invoke("Rewind");
+
+                // Write directly into the ZIP
+                zipOut.putNextEntry(new ZipEntry(safeName));
+                while (true) {
+                    String chunk = (String) stream.invoke("Read", 1024);
+                    if (chunk == null || chunk.isEmpty()) break;
+                    zipOut.write(chunk.getBytes());
+                }
+                zipOut.closeEntry();
+                stream.close();
+
+                // Clean up IRIS-side file
+                iris.classMethodBoolean("%File", "Delete", irisFilePath);
             }
         }
 
         log.info("Zip created: " + zipPath.toAbsolutePath());
         return zipPath.toFile();
     }
+
 
 }
