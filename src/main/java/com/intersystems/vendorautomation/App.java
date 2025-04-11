@@ -10,13 +10,20 @@ import com.intersystems.jdbc.IRISObject;
 import java.io.*;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -114,7 +121,7 @@ public class App {
         if (tablePopulated) {
             createScheduledTasks();
         }
-
+        exportBundles();
         createArtifactIdFile();
     }
 
@@ -305,7 +312,8 @@ public class App {
 
         IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
 
-        for (int i = 0; i < itemsArray.length(); i++) {
+        // for (int i = 0; i < itemsArray.length(); i++) {
+        for (int i = 0; i < 10; i++) {
             JSONObject item = itemsArray.getJSONObject(i);
 
             IRISObject importRequest = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BO.ImportRequest", "%New");
@@ -407,8 +415,8 @@ public class App {
         int suffix = 2;
         while (recipeNameExists(groupName) || recipeGroupNameExists(groupName)) {
             log.info(String.format("Recipe or RecipeGroup with name %s already exists. Trying %s %d", groupName, baseName, suffix));
-            suffix++;
             groupName = String.format("%s %d", baseName, suffix);
+            suffix++;
         }
         recipeGroupCreateObj.set("groupName", groupName);
         String groupId;
@@ -426,8 +434,8 @@ public class App {
             suffix = 2;
             while (recipeNameExists(recipeName) || recipeGroupNameExists(recipeName)) {
                 log.info(String.format("Recipe or RecipeGroup with name %s already exists. Trying %s %d", recipeName, group, suffix));
-                suffix++;
                 recipeName = String.format("%s %d", group, suffix);
+                suffix++;
             }
             recipeCreateObj.set("name", recipeName);
             recipeCreateObj.set("shortName", recipeName.length() > 15 ? recipeName.substring(0, 15) : recipeName);
@@ -628,8 +636,8 @@ public class App {
         int suffix = 2;
         while (scheduledTaskDescriptionExists(scheduledTaskGroupName)) {
             log.info(String.format("ScheduledTask with description %s already exists. Trying %s %d", scheduledTaskGroupName, baseName, suffix));
-            suffix++;
             scheduledTaskGroupName = String.format("%s %d", baseName, suffix);
+            suffix++;
         }
         log.info(String.format("Creating ScheduledTaskGroup %s", scheduledTaskGroupName));
         scheduledTaskGroupCreateObj.set("taskDescription", scheduledTaskGroupName);
@@ -652,8 +660,8 @@ public class App {
             suffix = 2;
             while (scheduledTaskDescriptionExists(scheduledTaskName)) {
                 log.info(String.format("ScheduledTask with description %s already exists. Trying %s %d", scheduledTaskName, group, suffix));
-                suffix++;
                 scheduledTaskName = String.format("%s %d", group, suffix);
+                suffix++;
             }
             scheduledTaskCreateObj.set("taskDescription", scheduledTaskName);
             scheduledTaskCreateObj.set("scheduledTaskType", "0");
@@ -886,29 +894,121 @@ public class App {
         iris.classMethodVoid("SDS.API.DataSourceAPI", "DataSourceDelete", dataSourceId);
     }
 
-    // private void exportBundle() {
-    //     log.info("exportBundle()");
+    private void exportBundles() {
+        log.info("exportBundle()");
 
-    //     IRISObject configExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
-    //     IRISObject items = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
+        IRISObject configList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configList", "%New");
+        configList = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigItemGetList");
+        IRISObject itemsList = (IRISObject) configList.get("items");
 
-    //     tableGuids.forEach((table, guid) -> {
-    //         IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
-    //         configExportListItem.set("fileName", String.format("ISC%sPackageSource-%s.TotalViewDataSchemaDefinition", dataSourceType, table));
-    //         configExportListItem.set("guid", guid);
-    //         items.invoke("Insert", configExportListItem);
-    //     });
+        IRISObject dsConfigExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
+        IRISObject dsItems = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
+        IRISObject recConfigExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
+        IRISObject recItems = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
+        IRISObject schedConfigExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
+        IRISObject schedItems = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
 
-    //     recipeGuids.forEach((recipe, guid) -> {
-    //         IRISObject configExportListItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportListItem", "%New");
-    //         configExportListItem.set("fileName", String.format("%s.TotalViewRecipe", recipe));
-    //         configExportListItem.set("guid", guid);
-    //         items.invoke("Insert", configExportListItem);
-    //     });
+        long count = (Long) itemsList.invoke("Count");
 
-    //     configExportList.set("items", items);
+        for (int i = 1; i <= count; i++) {
+            IRISObject item = (IRISObject) itemsList.invoke("GetAt", i);
+            String fileName = (String) item.get("fileName");
 
-    //     IRISObject exportBundle = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.Bundle", "%New");
-    //     exportBundle = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigExport", configExportList);
-    // }
+            if (fileName != null && fileName.contains(".")) {
+
+                IRISObject newItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configListItem", "%New");
+                newItem.set("fileName", fileName);
+                newItem.set("guid", item.get("guid"));
+
+                String prefix = fileName.substring(0, fileName.indexOf('.'));
+                String suffix = fileName.substring(fileName.indexOf('.') + 1);
+
+                if (suffix.equals("TotalViewDataSchemaDefinition") && prefix.startsWith(String.format("%s-", baseName))) {
+                    dsItems.invoke("Insert", newItem);
+                }
+                else if (suffix.equals("TotalViewRecipe")) {
+                    recItems.invoke("Insert", newItem);
+                }
+                else if (suffix.equals("TotalViewScheduledTask")) {
+                    schedItems.invoke("Insert", newItem);
+                }
+            }
+        }
+
+        dsConfigExportList.set("items", dsItems);
+        recConfigExportList.set("items", recItems);
+        schedConfigExportList.set("items", schedItems);
+
+        try {
+            File schemaZip = exportUDLStreamAndZip(dsItems, "Schema");
+            File recipeZip = exportUDLStreamAndZip(recItems, "Recipe");
+            File taskZip   = exportUDLStreamAndZip(schedItems, "ScheduledTask");
+
+            log.info("All bundles exported and downloaded.");
+        } catch (Exception e) {
+            log.error("Failed to export and download bundle zips", e);
+        }
+    }
+
+    private File exportUDLStreamAndZip(IRISObject itemsList, String label) throws Exception {
+        List<File> exportedFiles = new ArrayList<>();
+        Path outputDir = Paths.get("exports");
+        Files.createDirectories(outputDir);
+
+        long count = (Long) itemsList.invoke("Count");
+        for (int i = 1; i <= count; i++) {
+            IRISObject item = (IRISObject) itemsList.invoke("GetAt", i);
+            String fileName = (String) item.get("fileName");
+            if (fileName == null || fileName.isEmpty()) continue;
+
+            String safeName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_") + ".xml";
+            Path outputFile = outputDir.resolve(safeName);
+            String irisFilePath = "/tmp/" + safeName;
+
+            Long status = (Long) iris.classMethodObject("%SYSTEM.OBJ", "ExportUDL", fileName, irisFilePath);
+            boolean ok = iris.classMethodBoolean("%SYSTEM.Status", "IsOK", status);
+            if (!ok) {
+                String err = iris.classMethodString("%SYSTEM.Status", "GetErrorText", status);
+                throw new IOException("Failed to export UDL for " + fileName + ": " + err);
+            }
+
+            IRISObject stream = (IRISObject) iris.classMethodObject("%Stream.FileCharacter", "%New");
+            stream.set("Filename", irisFilePath);
+            stream.invoke("Rewind");
+
+            try (BufferedWriter writer = Files.newBufferedWriter(outputFile)) {
+                while (true) {
+                    String chunk = (String) stream.invoke("Read", 1024);
+                    if (chunk == null || chunk.isEmpty()) break;
+                    writer.write(chunk);
+                }
+            }
+
+            stream.close();
+            exportedFiles.add(outputFile.toFile());
+            log.info("Exported and saved: " + outputFile.getFileName());
+        }
+
+        // Zip everything
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        Path zipPath = outputDir.resolve(label + "_Bundle_" + timestamp + ".zip");
+
+        try (ZipOutputStream zipOut = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+            for (File file : exportedFiles) {
+                try (FileInputStream fis = new FileInputStream(file)) {
+                    zipOut.putNextEntry(new ZipEntry(file.getName()));
+                    byte[] buffer = new byte[4096];
+                    int len;
+                    while ((len = fis.read(buffer)) > 0) {
+                        zipOut.write(buffer, 0, len);
+                    }
+                    zipOut.closeEntry();
+                }
+            }
+        }
+
+        log.info("Zip created: " + zipPath.toAbsolutePath());
+        return zipPath.toFile();
+    }
+
 }
