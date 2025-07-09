@@ -34,6 +34,8 @@ public class CreateYAMLS {
     private String entityGuid;
     private String scheduledTaskGroupGuid;
     private String schedulableResourceGroupGuid;
+    private String user;
+    private String workflowRoleGuid;
 
     // Single method to set all required data
     public void setData(Set<String> groups, Set<String> tables, Map<String, List<String>> groupTableMapping,
@@ -41,7 +43,8 @@ public class CreateYAMLS {
                        Map<String, String> recipeGuids, Map<String, String> taskGuids,
                        IRIS iris, int dataSourceId, String dataSourceType,
                        String recipeGroupName, String baseName, String entityGuid,
-                       String scheduledTaskGroupGuid, String schedulableResourceGroupGuid) {
+                       String scheduledTaskGroupGuid, String schedulableResourceGroupGuid,
+                       String user, String workflowRoleGuid) {
 
         this.groups = groups;
         this.tables = tables;
@@ -58,6 +61,8 @@ public class CreateYAMLS {
         this.entityGuid = entityGuid;
         this.scheduledTaskGroupGuid = scheduledTaskGroupGuid;
         this.schedulableResourceGroupGuid = schedulableResourceGroupGuid;
+        this.user = user;
+        this.workflowRoleGuid = workflowRoleGuid;
     }
 
     private static final Logger log = LogManager.getLogger(App.class);
@@ -74,8 +79,6 @@ public class CreateYAMLS {
         Yaml yaml = new Yaml(options);
 
         for (String table : tableGuids.keySet()) {
-
-            log.info("Processing table: '" + table + "'");
 
             String tableGuid = tableGuids.get(table);
             if (tableGuid == null || tableGuid.isEmpty()) {
@@ -306,7 +309,7 @@ public class CreateYAMLS {
 
         // Spec map - using LinkedHashMap to guarantee insertion order
         Map<String, Object> spec = new LinkedHashMap<>();
-        spec.put("owner", "");
+        spec.put("owner", user);
         spec.put("taskDescription", baseName);
         spec.put("schedulingType", "Manually Run");
         spec.put("enabled", 1);
@@ -348,7 +351,7 @@ public class CreateYAMLS {
 
             // Spec map - using LinkedHashMap to guarantee insertion order
             Map<String, Object> spec = new LinkedHashMap<>();
-            spec.put("owner", "");
+            spec.put("owner", user);
             spec.put("taskDescription", group);
             spec.put("schedulingType", "Manually Run");
             spec.put("enabled", 1);
@@ -358,7 +361,7 @@ public class CreateYAMLS {
             schedulableResource.put("identifier", recipeGuids.get(group));
             spec.put("schedulableResource", schedulableResource);
             spec.put("entity", entityGuid);
-            spec.put("exceptionWorkflowRole", "");
+            spec.put("exceptionWorkflowRole", workflowRoleGuid);
             spec.put("dependencyInactivityTimeout", "");
             spec.put("schedulingGroup", scheduledTaskGroupGuid);
             Map<String, Object> schedulingProperties = new LinkedHashMap<>();

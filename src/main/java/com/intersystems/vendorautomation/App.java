@@ -317,8 +317,7 @@ public class App {
 
         IRISObject dataCatalogService = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BS.Service", "%New", "Data Catalog Service");
 
-        // for (int i = 0; i < itemsArray.length(); i++) {
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < itemsArray.length(); i++) {
             JSONObject item = itemsArray.getJSONObject(i);
 
             IRISObject importRequest = (IRISObject) iris.classMethodObject("SDS.DataCatalog.BO.ImportRequest", "%New");
@@ -686,7 +685,9 @@ public class App {
 
             IRISObject scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreateResponse", "%New");
             scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.BusinessSchedulerAPI", "ScheduledTaskCreate", scheduledTaskCreateObj);
-            taskGuids.put(group, (String) ((IRISObject) scheduledTaskCreateRespObj.get("schedulableResource")).get("guid"));
+            String taskId = (String) scheduledTaskCreateRespObj.get("id");
+            String taskGuid = getTaskGuid(taskId);
+            taskGuids.put(group, taskGuid);
         }
     }
 
@@ -863,7 +864,7 @@ public class App {
         deleteRecipes();
         deleteRecipeGroup();
         deleteDataSchemaDefinitions();
-        //deleteDataSource();
+        deleteDataSource();
     }
 
     private void deleteScheduledTasks() {
@@ -915,62 +916,7 @@ public class App {
     private void exportBundles() {
         log.info("exportBundle()");
 
-        // COMMENTED OUT: Original IRIS-based export logic
-        /*
-        IRISObject configList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configList", "%New");
-        configList = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigItemGetList");
-        IRISObject itemsList = (IRISObject) configList.get("items");
-
-        IRISObject dsConfigExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
-        IRISObject dsItems = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
-        IRISObject recConfigExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
-        IRISObject recItems = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
-        IRISObject schedConfigExportList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configExportList", "%New");
-        IRISObject schedItems = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
-
-        long count = (Long) itemsList.invoke("Count");
-
-        for (int i = 1; i <= count; i++) {
-            IRISObject item = (IRISObject) itemsList.invoke("GetAt", i);
-            String fileName = (String) item.get("fileName");
-
-            if (fileName != null && fileName.contains(".")) {
-
-                IRISObject newItem = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configListItem", "%New");
-                newItem.set("fileName", fileName);
-                newItem.set("guid", item.get("guid"));
-
-                String prefix = fileName.substring(0, fileName.indexOf('.'));
-                String suffix = fileName.substring(fileName.indexOf('.') + 1);
-
-                if (suffix.equals("TotalViewDataSchemaDefinition") && prefix.startsWith(String.format("%s-", baseName))) {
-                    dsItems.invoke("Insert", newItem);
-                }
-                else if (suffix.equals("TotalViewRecipe")) {
-                    recItems.invoke("Insert", newItem);
-                }
-                else if (suffix.equals("TotalViewScheduledTask")) {
-                    schedItems.invoke("Insert", newItem);
-                }
-            }
-        }
-
-        dsConfigExportList.set("items", dsItems);
-        recConfigExportList.set("items", recItems);
-        schedConfigExportList.set("items", schedItems);
-
-        try {
-            File schemaZip = exportUDLStreamAndZip(dsItems, "Schema");
-            File recipeZip = exportUDLStreamAndZip(recItems, "Recipe");
-            File taskZip   = exportUDLStreamAndZip(schedItems, "ScheduledTask");
-
-            log.info("All bundles exported and downloaded.");
-        } catch (Exception e) {
-            log.error("Failed to export and download bundle zips", e);
-        }
-        */
-
-        // NEW: Use CreateYAMLS to generate YAML files and create ZIP bundles
+        // Use CreateYAMLS to generate YAML files and create ZIP bundles
         try {
             // Create directories if they don't exist
             Files.createDirectories(Paths.get("schemadefs"));
@@ -983,12 +929,14 @@ public class App {
 
             String entityGuid = getEntityGuid();
             String schedulableResourceGroupGuid = getSchedulableResourceGroupGuid();
+            String workflowRoleGuid = getWorkflowRoleGuid();
 
                         // Set all required data from App class in a single call
             createYAMLS.setData(groups, tables, groupTableMapping, tableGuids, tableFields,
                                recipeGuids, taskGuids, iris, dataSourceId, dataSourceType,
                                recipeGroupName, baseName, entityGuid,
-                               scheduledTaskGroupGuid, schedulableResourceGroupGuid);
+                               scheduledTaskGroupGuid, schedulableResourceGroupGuid,
+                               config.getString("database.user"), workflowRoleGuid);
 
             // Generate YAML files
             createYAMLS.createDataSchemaDefinitionYAMLs();
@@ -1006,54 +954,6 @@ public class App {
         } catch (Exception e) {
             log.error("Failed to export and download bundle zips using CreateYAMLS", e);
         }
-    }
-
-    private File exportUDLStreamAndZip(IRISObject itemsList, String label) throws Exception {
-        Path outputDir = Paths.get("exports");
-        Files.createDirectories(outputDir);
-
-        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-        Path zipPath = outputDir.resolve(label + "_Bundle_" + timestamp + ".zip");
-
-        try (ZipOutputStream zipOut = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
-            long count = (Long) itemsList.invoke("Count");
-
-            for (int i = 1; i <= count; i++) {
-                IRISObject item = (IRISObject) itemsList.invoke("GetAt", i);
-                String fileName = (String) item.get("fileName");
-                if (fileName == null || fileName.isEmpty()) continue;
-
-                String safeName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
-                String irisFilePath = "/tmp/" + safeName;
-
-                Long status = (Long) iris.classMethodObject("%SYSTEM.OBJ", "ExportUDL", fileName, irisFilePath);
-                boolean ok = iris.classMethodBoolean("%SYSTEM.Status", "IsOK", status);
-                if (!ok) {
-                    String err = iris.classMethodString("%SYSTEM.Status", "GetErrorText", status);
-                    throw new IOException("Failed to export UDL for " + fileName + ": " + err);
-                }
-
-                IRISObject stream = (IRISObject) iris.classMethodObject("%Stream.FileCharacter", "%New");
-                stream.set("Filename", irisFilePath);
-                stream.invoke("Rewind");
-
-                // Write directly into the ZIP
-                zipOut.putNextEntry(new ZipEntry(safeName));
-                while (true) {
-                    String chunk = (String) stream.invoke("Read", 1024);
-                    if (chunk == null || chunk.isEmpty()) break;
-                    zipOut.write(chunk.getBytes());
-                }
-                zipOut.closeEntry();
-                stream.close();
-
-                // Clean up IRIS-side file
-                iris.classMethodBoolean("%File", "Delete", irisFilePath);
-            }
-        }
-
-        log.info("Zip created: " + zipPath.toAbsolutePath());
-        return zipPath.toFile();
     }
 
     private File createZipFromDirectory(String directoryPath, String label) throws IOException {
@@ -1113,6 +1013,37 @@ public class App {
 
         rs.next();
         String guid = rs.getString("GUID");
+        stmt.close();
+
+        return guid;
+    }
+
+    private String getTaskGuid(String taskId) throws SQLException {
+        log.info("getTaskGuid()");
+
+        String query = "SELECT InternalGUID FROM SDS_BusinessScheduler.ScheduledTask WHERE ID = ?";
+
+        PreparedStatement stmt = connection.prepareStatement(query);
+        stmt.setString(1, taskId);
+        ResultSet rs = stmt.executeQuery();
+
+        rs.next();
+        String guid = rs.getString("InternalGUID");
+        stmt.close();
+
+        return guid;
+    }
+
+    private String getWorkflowRoleGuid() throws SQLException {
+        log.info("getWorkflowRoleGuid()");
+
+        String query = "SELECT InternalGUID FROM B360_Security.UserRole WHERE ID = 1";
+
+        PreparedStatement stmt = connection.prepareStatement(query);
+        ResultSet rs = stmt.executeQuery();
+
+        rs.next();
+        String guid = rs.getString("InternalGUID");
         stmt.close();
 
         return guid;
