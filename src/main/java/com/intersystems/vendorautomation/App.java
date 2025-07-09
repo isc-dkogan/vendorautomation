@@ -52,7 +52,11 @@ public class App {
     private Map<String, List<String>> tableFields = new HashMap<>();
     private Map<String, String> recipeGuids = new HashMap<>();
     private List<String> recipeIds = new ArrayList<>();
+    private String recipeGroupName;
+    private Map<String, String> taskGuids = new HashMap<>();
     private String scheduledTaskGroupId;
+    private String scheduledTaskGroupGuid;
+    private String scheduledTaskGroupName;
 
     private IRISConnection connection;
     private IRIS iris;
@@ -63,6 +67,7 @@ public class App {
     private String schema;
 
     private String scheduledTaskGroupIdToDelete;
+    private String recipeGroupNameToDelete;
     private List<String> recipeIdsToDelete = new ArrayList<>();
     private List<String> tableIdsToDelete = new ArrayList<>();
 
@@ -87,9 +92,9 @@ public class App {
         setConfig();
 
         Map<String, ExceptionHandler> runTypeHandlers = new HashMap<>();
+        runTypeHandlers.put("createTargetTables", () -> createTargetTables());
         runTypeHandlers.put("generateArtifacts", () -> generateArtifacts());
         runTypeHandlers.put("cleanupArtifacts", () -> cleanupArtifacts());
-        runTypeHandlers.put("createTargetTables", () -> createTargetTables());
 
         String runType = config.getString("runType");
 
@@ -101,13 +106,32 @@ public class App {
         }
     }
 
+    private void createTargetTables() throws Exception {
+        log.info("createTargetTables()");
+
+        String xmlSourcePath = config.getString("createTargetTables.xmlSourcePath");
+        File file = new File(xmlSourcePath);
+
+        if (file.exists()) {
+            dataSourceType = getDataSourceType(config.getInt("generateArtifacts.dataSourceId"));
+
+            setMapping();
+
+            XMLProcessor xmlProcessor = new XMLProcessor(dataSourceType, xmlSourcePath);
+            List<String> tableKeywords = groups.stream()
+                                               .map(element -> String.format("Staging.%s", element))
+                                               .collect(Collectors.toList());
+            xmlProcessor.process(tableKeywords);
+        }
+    }
+
     private void generateArtifacts() throws Exception {
         log.info("generateArtifacts()");
 
         connectToIRIS();
 
         this.baseName = config.getString("generateArtifacts.name");
-
+        this.dataSourceType = getDataSourceType(config.getInt("generateArtifacts.dataSourceId"));
         this.dataSourceId = duplicateDataSource(config.getInt("generateArtifacts.dataSourceId"));
         this.schema = config.getString("generateArtifacts.schema");
 
@@ -131,25 +155,6 @@ public class App {
         connectToIRIS();
 
         cleanup(config.getString("cleanupArtifacts.cleanupSourcePath"));
-    }
-
-    private void createTargetTables() throws Exception {
-        log.info("createTargetTables()");
-
-        String xmlSourcePath = config.getString("createTargetTables.xmlSourcePath");
-        File file = new File(xmlSourcePath);
-
-        if (file.exists()) {
-            dataSourceType = getDataSourceType(config.getInt("generateArtifacts.dataSourceId"));
-
-            setMapping();
-
-            XMLProcessor xmlProcessor = new XMLProcessor(dataSourceType, xmlSourcePath);
-            List<String> tableKeywords = groups.stream()
-                                               .map(element -> String.format("Staging.%s", element))
-                                               .collect(Collectors.toList());
-            xmlProcessor.process(tableKeywords);
-        }
     }
 
     private void setConfig() {
@@ -228,7 +233,7 @@ public class App {
 
         newDataSourceId = Integer.parseInt(id);
 
-        log.info("New data source %s created with id=%s ", newDataSource.get("Name"), newDataSourceId);
+        log.info(String.format("New data source %s created with id=%s ", newDataSource.get("Name"), newDataSourceId));
 
         return newDataSourceId;
     }
@@ -407,7 +412,7 @@ public class App {
         }
     }
 
-    private void createRecipes() throws SQLException {
+    private void createRecipes() throws Exception {
         log.info("createRecipes()");
 
         IRISObject recipeGroupCreateObj = (IRISObject) iris.classMethodObject("intersystems.recipeGroup.v1.recipeGroupCreate", "%New");
@@ -419,6 +424,7 @@ public class App {
             suffix++;
         }
         recipeGroupCreateObj.set("groupName", groupName);
+        this.recipeGroupName = groupName; // Store the recipe group name for cleanup
         String groupId;
         try {
             groupId = (String) iris.classMethodObject("SDS.API.RecipeGroupAPI", "RecipeGroupCreate", recipeGroupCreateObj);
@@ -480,7 +486,7 @@ public class App {
 
                 List<String> fields = tableFields.get(String.format("%s%s", schema, table));
                 if (fields == null) {
-                    log.warn("null fields for table: " + table);
+                   // log.warn("null fields for table: " + table);
                     continue;
                 }
                 IRISObject dataSchemaFields = (IRISObject) iris.classMethodObject("%Library.ListOfObjects", "%New");
@@ -550,24 +556,26 @@ public class App {
             }
             stagingActivityUpdateObj.set("dataSchemas", dataSchemas);
 
-            log.info("Setting daata schemas for staging activity");
+            log.info("Setting data schemas for staging activity");
             IRISObject stagingActivityUpdateRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivityUpdateResponse", "%New");
             stagingActivityUpdateRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivityUpdate", stagingActivityCreateRespObj.get("id"), stagingActivityUpdateObj);
 
-            // IRISObject stagingActivity = (IRISObject) iris.classMethodObject("SDS.DataLoader.Staging.StagingActivity", "%OpenId", stagingActivityUpdateRespObj.get("id"));
-            // stagingActivity.set("Editing", false);
-            // Object sc;
-            // sc = stagingActivity.invoke("%Save");
+            /*
+            IRISObject stagingActivity = (IRISObject) iris.classMethodObject("SDS.DataLoader.Staging.StagingActivity", "%OpenId", stagingActivityUpdateRespObj.get("id"));
+            stagingActivity.set("Editing", false);
+            Object sc;
+            sc = stagingActivity.invoke("%Save");
 
-            // if (sc == null) {
-            //     throw new Exception("Could not create staging activity");
-            // }
-            // else if ((sc instanceof String) && (((String) sc).charAt(0) == '0')) {
-            //     throw new Exception("Could not create staging activity:" + ((String) sc).substring(1));
-            // }
+            if (sc == null) {
+                throw new Exception("Could not create staging activity");
+            }
+            else if ((sc instanceof String) && (((String) sc).charAt(0) == '0')) {
+                throw new Exception("Could not create staging activity:" + ((String) sc).substring(1));
+            }
 
-            // IRISObject stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivitySessionResponse", "%New");
-            // stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivitySessionClose", stagingActivityUpdateRespObj.get("id"), true, false);
+            IRISObject stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("intersystems.recipes.v1.activity.staging.StagingActivitySessionResponse", "%New");
+            stagingActivitySessionCloseRespObj = (IRISObject) iris.classMethodObject("SDS.API.RecipesAPI", "StagingActivitySessionClose", stagingActivityUpdateRespObj.get("id"), true, false);
+            */
         }
     }
 
@@ -639,6 +647,7 @@ public class App {
             scheduledTaskGroupName = String.format("%s %d", baseName, suffix);
             suffix++;
         }
+        this.scheduledTaskGroupName = scheduledTaskGroupName;
         log.info(String.format("Creating ScheduledTaskGroup %s", scheduledTaskGroupName));
         scheduledTaskGroupCreateObj.set("taskDescription", scheduledTaskGroupName);
         scheduledTaskGroupCreateObj.set("scheduledTaskType", "1");
@@ -648,6 +657,7 @@ public class App {
         scheduledTaskGroupCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.BusinessSchedulerAPI", "ScheduledTaskCreate", scheduledTaskGroupCreateObj);
 
         scheduledTaskGroupId = (String) scheduledTaskGroupCreateRespObj.get("id");
+        scheduledTaskGroupGuid = (String) (String) ((IRISObject) scheduledTaskGroupCreateRespObj.get("schedulableResource")).get("guid");
 
         for (String group : groups) {
             log.info(String.format("Creating ScheduledTask for resource %s", recipeGuids.get(group)));
@@ -676,6 +686,7 @@ public class App {
 
             IRISObject scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("intersystems.businessScheduler.v1.scheduledTask.ScheduledTaskCreateResponse", "%New");
             scheduledTaskCreateRespObj = (IRISObject) iris.classMethodObject("SDS.API.BusinessSchedulerAPI", "ScheduledTaskCreate", scheduledTaskCreateObj);
+            taskGuids.put(group, (String) ((IRISObject) scheduledTaskCreateRespObj.get("schedulableResource")).get("guid"));
         }
     }
 
@@ -749,6 +760,7 @@ public class App {
         row.createCell(1).setCellValue("Scheduled Task Group Id");
         row.createCell(2).setCellValue("Recipe Ids");
         row.createCell(3).setCellValue("Data Schema Definition Ids");
+        row.createCell(4).setCellValue("Recipe Group Name");
 
         row = sheet.createRow(1);
 
@@ -756,6 +768,8 @@ public class App {
         cell.setCellValue(dataSourceId);
         cell = row.createCell(1);
         cell.setCellValue(scheduledTaskGroupId);
+        cell = row.createCell(4);
+        cell.setCellValue(recipeGroupName);
 
         for (int i = 0; i < recipeIds.size(); i++) {
             row = sheet.getRow(i + 1);
@@ -782,7 +796,7 @@ public class App {
             rowIndex++;
         }
 
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 5; i++) {
             sheet.autoSizeColumn(i);
         }
 
@@ -825,6 +839,10 @@ public class App {
                         if (taskGroupCell != null) {
                             scheduledTaskGroupIdToDelete = taskGroupCell.toString();
                         }
+                        Cell recipeGroupCell = row.getCell(4);
+                        if (recipeGroupCell != null) {
+                            recipeGroupNameToDelete = recipeGroupCell.toString();
+                        }
                     }
                     Cell recipeCell = row.getCell(2);
                     if (recipeCell != null) {
@@ -845,7 +863,7 @@ public class App {
         deleteRecipes();
         deleteRecipeGroup();
         deleteDataSchemaDefinitions();
-        deleteDataSource();
+        //deleteDataSource();
     }
 
     private void deleteScheduledTasks() {
@@ -866,16 +884,16 @@ public class App {
     }
 
     private void deleteRecipeGroup() throws SQLException {
-        log.info("deleteRecipes()");
+        log.info("deleteRecipeGroup()");
 
-        String recipeGroupName = baseName;
+        String recipeGroupName = recipeGroupNameToDelete;
 
         String query = "DELETE FROM SDS_DataLoader.RecipeGroup WHERE Name = ?";
 
-
         PreparedStatement stmt = connection.prepareStatement(query);
         stmt.setString(1, recipeGroupName);
-        ResultSet rs = stmt.executeQuery();
+        int rowsAffected = stmt.executeUpdate();
+        log.info(String.format("Deleted %d recipe group(s) with name %s", rowsAffected, recipeGroupName));
         stmt.close();
     }
 
@@ -897,6 +915,8 @@ public class App {
     private void exportBundles() {
         log.info("exportBundle()");
 
+        // COMMENTED OUT: Original IRIS-based export logic
+        /*
         IRISObject configList = (IRISObject) iris.classMethodObject("intersystems.ccm.v1.export.configList", "%New");
         configList = (IRISObject) iris.classMethodObject("SDS.API.CCMAPI", "ConfigItemGetList");
         IRISObject itemsList = (IRISObject) configList.get("items");
@@ -948,6 +968,44 @@ public class App {
         } catch (Exception e) {
             log.error("Failed to export and download bundle zips", e);
         }
+        */
+
+        // NEW: Use CreateYAMLS to generate YAML files and create ZIP bundles
+        try {
+            // Create directories if they don't exist
+            Files.createDirectories(Paths.get("schemadefs"));
+            Files.createDirectories(Paths.get("recipes"));
+            Files.createDirectories(Paths.get("scheduledtasksgroup"));
+            Files.createDirectories(Paths.get("scheduledtasks"));
+
+                        // Create CreateYAMLS instance and populate it with data
+            CreateYAMLS createYAMLS = new CreateYAMLS();
+
+            String entityGuid = getEntityGuid();
+            String schedulableResourceGroupGuid = getSchedulableResourceGroupGuid();
+
+                        // Set all required data from App class in a single call
+            createYAMLS.setData(groups, tables, groupTableMapping, tableGuids, tableFields,
+                               recipeGuids, taskGuids, iris, dataSourceId, dataSourceType,
+                               recipeGroupName, baseName, entityGuid,
+                               scheduledTaskGroupGuid, schedulableResourceGroupGuid);
+
+            // Generate YAML files
+            createYAMLS.createDataSchemaDefinitionYAMLs();
+            createYAMLS.createRecipeYAMLs();
+            createYAMLS.createScheduledTasksGroupYAML();
+            createYAMLS.createScheduledTaskYAMLs();
+
+            // Create ZIP files from the generated YAML files
+            File schemaZip = createZipFromDirectory("schemadefs", "Schema");
+            File recipeZip = createZipFromDirectory("recipes", "Recipe");
+            File taskGroupZip = createZipFromDirectory("scheduledtasksgroup", "ScheduledTaskGroup");
+            File taskZip = createZipFromDirectory("scheduledtasks", "ScheduledTask");
+
+            log.info("All bundles exported and downloaded using CreateYAMLS.");
+        } catch (Exception e) {
+            log.error("Failed to export and download bundle zips using CreateYAMLS", e);
+        }
     }
 
     private File exportUDLStreamAndZip(IRISObject itemsList, String label) throws Exception {
@@ -965,7 +1023,7 @@ public class App {
                 String fileName = (String) item.get("fileName");
                 if (fileName == null || fileName.isEmpty()) continue;
 
-                String safeName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_") + ".yaml";
+                String safeName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
                 String irisFilePath = "/tmp/" + safeName;
 
                 Long status = (Long) iris.classMethodObject("%SYSTEM.OBJ", "ExportUDL", fileName, irisFilePath);
@@ -998,5 +1056,65 @@ public class App {
         return zipPath.toFile();
     }
 
+    private File createZipFromDirectory(String directoryPath, String label) throws IOException {
+        Path outputDir = Paths.get("exports");
+        Files.createDirectories(outputDir);
 
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        Path zipPath = outputDir.resolve(label + "_Bundle_" + timestamp + ".zip");
+
+        try (ZipOutputStream zipOut = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+            Path directory = Paths.get(directoryPath);
+            if (Files.exists(directory)) {
+                Files.walk(directory)
+                    .filter(path -> !Files.isDirectory(path))
+                    .forEach(path -> {
+                        try {
+                            String fileName = path.getFileName().toString();
+                            zipOut.putNextEntry(new ZipEntry(fileName));
+                            Files.copy(path, zipOut);
+                            zipOut.closeEntry();
+                            log.info("Added to ZIP: " + fileName);
+                        } catch (IOException e) {
+                            log.error("Error adding file to ZIP: " + path, e);
+                        }
+                    });
+            }
+        }
+
+        log.info("ZIP created: " + zipPath.toAbsolutePath());
+        return zipPath.toFile();
+    }
+
+    private String getEntityGuid() throws SQLException {
+        log.info("getEntityGuid()");
+
+        String query = "SELECT InternalGUID FROM SDS.EntityMaster WHERE ID = 1";
+
+
+        PreparedStatement stmt = connection.prepareStatement(query);
+        ResultSet rs = stmt.executeQuery();
+
+        rs.next();
+        String guid = rs.getString("InternalGUID");
+        stmt.close();
+
+        return guid;
+    }
+
+    private String getSchedulableResourceGroupGuid() throws SQLException {
+        log.info("getSchedulableResourceGroupGuid()");
+
+        String query = "SELECT GUID FROM SDS_BusinessScheduler.SchedulableResource WHERE Name = ? AND Type = 'Group'";
+
+        PreparedStatement stmt = connection.prepareStatement(query);
+        stmt.setString(1, scheduledTaskGroupName);
+        ResultSet rs = stmt.executeQuery();
+
+        rs.next();
+        String guid = rs.getString("GUID");
+        stmt.close();
+
+        return guid;
+    }
 }
